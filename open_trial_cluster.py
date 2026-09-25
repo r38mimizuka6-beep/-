@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""trial cluster のログインページを Google Chrome で一発で開くスクリプト。"""
+"""Open the trial cluster login page in Google Chrome."""
 
 import os
 import shutil
@@ -8,16 +8,14 @@ import webbrowser
 
 URL = "https://trialclusterweb.com/portal/login"
 
-# OSごとの Chrome の候補パス
+# Chrome candidate paths per OS
 CHROME_PATHS = [
     # macOS
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     # Windows
     r"C:\Program Files\Google\Chrome\Application\chrome.exe",
     r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-    os.path.expandvars(
-        r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"
-    ),
+    os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
     # Linux
     "/usr/bin/google-chrome",
     "/usr/bin/google-chrome-stable",
@@ -25,7 +23,7 @@ CHROME_PATHS = [
     "/usr/bin/chromium-browser",
 ]
 
-# PATH 上で探す実行ファイル名
+# Executable names to look up on PATH
 CHROME_COMMANDS = [
     "google-chrome",
     "google-chrome-stable",
@@ -35,8 +33,8 @@ CHROME_COMMANDS = [
 ]
 
 
-def find_chrome() -> str | None:
-    """利用可能な Chrome の実行ファイルパスを返す。見つからなければ None。"""
+def find_chrome():
+    """Return the path to a usable Chrome executable, or None if not found."""
     for path in CHROME_PATHS:
         if path and os.path.exists(path):
             return path
@@ -47,22 +45,20 @@ def find_chrome() -> str | None:
     return None
 
 
-def main() -> int:
-    print(f"Chrome で開いています: {URL}")
+def main():
+    print(f"Opening in Chrome: {URL}")
 
     chrome_path = find_chrome()
     if chrome_path is None:
         print(
-            "Google Chrome が見つかりませんでした。"
-            "\nChrome がインストールされているか確認してください。"
-            "\n手動で開く場合は下記のURLをどうぞ:\n"
+            "Google Chrome was not found."
+            "\nPlease make sure Chrome is installed."
+            "\nTo open manually, use this URL:\n"
             f"{URL}",
             file=sys.stderr,
         )
         return 1
 
-    # webbrowser に Chrome を登録して起動する
-    # "%s" は開く URL に置き換えられる
     webbrowser.register(
         "chrome",
         None,
@@ -72,8 +68,8 @@ def main() -> int:
     opened = webbrowser.get("chrome").open(URL)
     if not opened:
         print(
-            "Chrome を起動できませんでした。"
-            "\n手動で開く場合は下記のURLをどうぞ:\n"
+            "Failed to launch Chrome."
+            "\nTo open manually, use this URL:\n"
             f"{URL}",
             file=sys.stderr,
         )
