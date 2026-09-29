@@ -10,11 +10,10 @@ the login is remembered for later runs.
 """
 
 import os
+import shutil
 import subprocess
 import sys
 import time
-
-from open_trial_cluster import find_chrome
 
 URL = (
     "https://app.notion.com/p/3890c6890a5e80ba925ffe34cf55b9cb"
@@ -28,6 +27,25 @@ PROFILE_DIR = os.path.join(os.path.expanduser("~"), ".notion-new-meeting-chrome"
 
 # Seconds to wait for the button before assuming we are not logged in
 BUTTON_TIMEOUT = 20
+
+CHROME_PATHS = [
+    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+]
+
+
+def find_chrome():
+    """Return the path to a usable Chrome executable, or None if not found."""
+    for path in CHROME_PATHS:
+        if os.path.exists(path):
+            return path
+    for cmd in ("chrome", "google-chrome", "chromium"):
+        found = shutil.which(cmd)
+        if found:
+            return found
+    return None
 
 
 def launch_chrome(chrome_path):
