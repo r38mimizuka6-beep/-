@@ -47,6 +47,11 @@ def build_parser() -> argparse.ArgumentParser:
   python run_report.py search-plan --xlsx 商圏/*.xlsx --out data/search
   python run_report.py report --master m.csv --new n.csv \\
       --idpos IDPOS.csv --margin URE_ZAIKO.csv --level category
+  # 業態転換リニューアルの場合（転換前後法が使える・推奨）
+  python run_report.py report --master m.csv --new n.csv \\
+      --idpos 転換後IDPOS.csv      --margin 転換後URE.csv \\
+      --prior-idpos 転換前IDPOS.csv --prior-margin 転換前URE.csv \\
+      --baseline-idpos 新店の転換前IDPOS.csv --baseline-margin 新店の転換前URE.csv
   python run_report.py verify --prediction output/predictions_0199.json \\
       --idpos 新店IDPOS.csv --margin 新店URE_ZAIKO.csv \\
       --ref-idpos 既存IDPOS.csv --ref-margin 既存URE_ZAIKO.csv
@@ -64,6 +69,13 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--new", required=True, help="新店の商圏情報（1行）")
     r.add_argument("--idpos", required=True, help="既存店の週次IDPOS CSV")
     r.add_argument("--margin", help="既存店の週次 売上在庫（粗利）CSV")
+    r.add_argument("--customers", help="店舗CD×年週×レジ通過客数のCSV（任意。渡すと粗利PIが出せる）")
+    r.add_argument("--prior-idpos", help="既存店の【業態転換前】の週次IDPOS")
+    r.add_argument("--prior-margin", help="既存店の【業態転換前】の週次 売上在庫")
+    r.add_argument("--prior-customers", help="既存店の【業態転換前】の客数CSV")
+    r.add_argument("--baseline-idpos", help="新店（同一立地）の【転換前】の週次IDPOS")
+    r.add_argument("--baseline-margin", help="新店（同一立地）の【転換前】の週次 売上在庫")
+    r.add_argument("--baseline-customers", help="新店（同一立地）の【転換前】の客数CSV")
     r.add_argument("--search", help="店舗名検索で埋めた search_profile.csv")
     r.add_argument("--level", choices=LEVEL_CHOICES, help="分析粒度（既定: metrics.yaml の設定）")
     r.add_argument("--out", default="output/report.html")
@@ -131,6 +143,16 @@ def _print_summary(a) -> None:
                 continue
             btxt = f" / 全店平均 {np.mean(base):.1f}%" if base else ""
             print(f"  LOO誤差 {a.mcfg.metric_label(met)}: ±{np.mean(vals):.1f}%{btxt}")
+    if a.conversion is not None and a.conversion.predictions:
+        import numpy as np
+        errs = [c.ratio.loo_mape for c in a.conversion.predictions
+                if c.ratio.loo_mape is not None]
+        print(f"転換前後法: {len(a.conversion.paired_stores)}店の前後ペアから算出"
+              + (f"／変化率の1店抜き誤差 ±{np.mean(errs):.1f}%" if errs else ""))
+        if not a.method_compare.empty:
+            win = (a.method_compare["better"] == "転換前後法").sum()
+            print(f"  実測誤差で転換前後法が勝った組み合わせ: "
+                  f"{win} / {len(a.method_compare)}")
     risky = [r for r in a.risks if r.level in ("要対策", "警戒")]
     if risky:
         print("苦戦予想: " + "、".join(
@@ -224,6 +246,13 @@ def main(argv: list[str] | None = None) -> int:
                 new_store_path=SAMPLE / "new_store.csv",
                 idpos_path=SAMPLE / "idpos_sample.csv.gz",
                 margin_path=SAMPLE / "ure_zaiko_sample.csv.gz",
+                customers_path=SAMPLE / "customers_sample.csv.gz",
+                prior_idpos_path=SAMPLE / "idpos_prior_sample.csv.gz",
+                prior_margin_path=SAMPLE / "ure_zaiko_prior_sample.csv.gz",
+                prior_customers_path=SAMPLE / "customers_prior_sample.csv.gz",
+                baseline_idpos_path=SAMPLE / "idpos_newstore_baseline.csv.gz",
+                baseline_margin_path=SAMPLE / "ure_zaiko_newstore_baseline.csv.gz",
+                baseline_customers_path=SAMPLE / "customers_newstore.csv.gz",
                 level=args.level,
                 weight_overrides=_weights(args.weight),
                 level_scan=not args.no_level_scan,
@@ -233,6 +262,12 @@ def main(argv: list[str] | None = None) -> int:
                 config_path=args.config, metrics_path=args.metrics,
                 master_path=args.master, new_store_path=args.new,
                 idpos_path=args.idpos, margin_path=args.margin,
+                customers_path=args.customers,
+                prior_idpos_path=args.prior_idpos, prior_margin_path=args.prior_margin,
+                prior_customers_path=args.prior_customers,
+                baseline_idpos_path=args.baseline_idpos,
+                baseline_margin_path=args.baseline_margin,
+                baseline_customers_path=args.baseline_customers,
                 search_path=args.search, level=args.level,
                 weight_overrides=_weights(args.weight), top_n=args.top,
                 level_scan=not args.no_level_scan,

@@ -286,6 +286,106 @@ def _sec_predictions(a) -> str:
 """
 
 
+def _sec_methods(a) -> str:
+    """転換前後法と類似店法の比較。業態転換リニューアルのときだけ出る。"""
+    conv = a.conversion
+    if conv is None:
+        return """
+<h2>2-2. もう一つの予測方法（使えませんでした）</h2>
+<div class="note warn">この新店が<strong>既存店の業態転換リニューアル</strong>なら、
+同じ立地の転換前実績が使えます。商圏から横に当てる類似店法より精度が上がります
+（立地・商圏・競合が同じ店の前後を比べるので、商圏の違いを推定する必要がありません）。<br>
+<code>--prior-idpos</code>（既存店の転換前）と <code>--baseline-idpos</code>（この店の転換前）を
+渡すと有効になります。</div>"""
+
+    if not conv.predictions:
+        warns = "".join(f"<li>{esc(w)}</li>" for w in conv.warnings)
+        return f"""
+<h2>2-2. 転換前後法（算出できませんでした）</h2>
+<div class="note bad"><ul style="margin:0;padding-left:18px">{warns}</ul></div>"""
+
+    cmp_df = a.method_compare
+    mcfg, idpos = a.mcfg, a.idpos
+    conv_by = conv.by_key()
+
+    rows = []
+    for _, r in cmp_df.sort_values(["metric", "unit"]).iterrows():
+        c = conv_by.get((r["unit"], r["metric"]))
+        m = mcfg.metric(r["metric"])
+        dg = getattr(m, "digits", 2)
+        better = r["better"]
+        bcls = "ok" if better == "転換前後法" else "warn"
+        se = "—" if pd.isna(r["similar_err"]) else f'±{r["similar_err"]:.1f}%'
+        ce = "—" if pd.isna(r["conversion_err"]) else f'±{r["conversion_err"]:.1f}%'
+        gap = "—" if pd.isna(r["gap_pct"]) else f'{r["gap_pct"]:+.1f}%'
+        rows.append(
+            f'<tr><td class="l">{esc(idpos.parent_of(r["unit"], "line") or "")}</td>'
+            f'<td class="l"><strong>{esc(idpos.leaf(r["unit"]))}</strong></td>'
+            f'<td class="l">{esc(r["metric_label"])}</td>'
+            f'<td>{r["baseline"]:,.{dg}f}</td>'
+            f'<td>{r["ratio"]:.2f}倍</td>'
+            f'<td><strong>{r["conversion_point"]:,.{dg}f}</strong>'
+            f'<br><span class="muted" style="font-size:11px">{ce}</span></td>'
+            f'<td>{r["similar_point"]:,.{dg}f}'
+            f'<br><span class="muted" style="font-size:11px">{se}</span></td>'
+            f'<td>{gap}</td>'
+            f'<td><span class="tag {bcls}">{esc(better)}</span></td></tr>'
+        )
+
+    ratio_rows = []
+    seen = set()
+    for (unit, metric), cr in sorted(conv.ratios.items()):
+        if metric != "pi":
+            continue
+        key = idpos.parent_of(unit, "line") or unit
+        if key in seen and idpos.level != "line":
+            pass
+        seen.add(key)
+        by = "、".join(f"{n} {v:.2f}" for n, v in sorted(cr.by_store.items()))
+        sp = "—" if cr.spread_pct is None else f'{cr.spread_pct:.0f}%'
+        lm = "—" if cr.loo_mape is None else f'±{cr.loo_mape:.1f}%'
+        ratio_rows.append(
+            f'<tr><td class="l">{esc(idpos.leaf(unit))}</td>'
+            f'<td><strong>{cr.ratio:.2f}倍</strong></td>'
+            f'<td>{cr.lo:.2f}〜{cr.hi:.2f}</td><td>{sp}</td>'
+            f'<td>{cr.n_stores}</td><td>{lm}</td>'
+            f'<td class="l muted" style="font-size:11px">{esc(by)}</td></tr>'
+        )
+
+    wins = int((cmp_df["better"] == "転換前後法").sum())
+    total = len(cmp_df)
+    verdict = ("転換前後法を主に使ってください" if wins > total / 2
+               else "この指標群では類似店法のほうが安定しています")
+    warns = "".join(f'<div class="note warn">{esc(w)}</div>' for w in conv.warnings)
+
+    return f"""
+<h2>2-2. 転換前後法（同じ立地の転換前実績から）</h2>
+<p class="sub">この新店は既存店の業態転換リニューアルなので、同じ立地の転換前実績が使えます。<br>
+<strong>予測 = この店の転換前実績 × （既存{len(conv.paired_stores)}店で測った 転換後÷転換前 の比率）</strong><br>
+立地・商圏・競合が同じ店の前後を比べるので、商圏の違いを推定する必要がありません。
+推定するのは業態転換そのものの効果だけで、これは転換済みの既存店から直接測れます。</p>
+<div class="note"><strong>実測誤差での勝敗: 転換前後法 {wins} / {total} 組み合わせ。{esc(verdict)}</strong><br>
+類似店法の誤差はLOO（1店抜き）、転換前後法の誤差は「他店の変化率中央値でその店の変化率を当てたときの誤差」です。
+どちらも既存店で実測した値です。</div>
+{warns}
+
+<h3>業態転換による変化率（既存{len(conv.paired_stores)}店の実測）</h3>
+<p class="sub">数量PIについて。店舗間でばらつく分が、そのまま予測の不確実性になります。</p>
+<table><thead><tr><th class="l">{esc(idpos.level_label())}</th><th>変化率<br>中央値</th>
+<th>店舗間レンジ</th><th>ばらつき</th><th>店舗数</th><th>1店抜き誤差</th>
+<th class="l">店舗別</th></tr></thead><tbody>{"".join(ratio_rows)}</tbody></table>
+
+<h3>2つの方法の比較</h3>
+<table><thead><tr><th class="l">ライン</th><th class="l">{esc(idpos.level_label())}</th>
+<th class="l">指標</th><th>この店の<br>転換前実績</th><th>変化率</th>
+<th>転換前後法<br>の予測</th><th>類似店法<br>の予測</th><th>差</th>
+<th>採用</th></tr></thead><tbody>{"".join(rows)}</tbody></table>
+<div class="note">2つの方法が大きく食い違う組み合わせは、<strong>その食い違い自体が警告</strong>です。
+商圏から見た期待値と、その立地の実績が合っていないということなので、
+どちらを採るかを決める前に理由（競合、売場、客層）を確かめてください。</div>
+"""
+
+
 def _sec_customers(a) -> str:
     am = a.age_mix
     if am is None:
@@ -461,8 +561,38 @@ LOO誤差が週次変動に近い粒度までは使えますが、大きく上�
     ccls = {"高": "note", "中〜高": "note", "中": "note warn", "低": "note bad"}.get(
         c["level"], "note warn")
 
+    mt = a.idpos.maturity
+    if mt is None or mt.empty:
+        maturity_tbl = ('<div class="note warn">商圏マスタに open_date が無いため、'
+                        '開店直後の週を除外できていません。'
+                        '転換時期が店ごとに違う場合、水準の比較が歪みます。</div>')
+    else:
+        names = a.idpos.store_names
+        mrows2 = "".join(
+            f'<tr><td class="l">{esc(names.get(str(r["store_id"]), r["store_id"]))}</td>'
+            f'<td>{esc(r["open_date"] or "—")}</td>'
+            f'<td>{"—" if pd.isna(r["weeks_since_open"]) else int(r["weeks_since_open"])}</td>'
+            f'<td>{int(r["weeks_excluded"])}</td>'
+            f'<td><strong>{int(r["weeks_used"])}</strong></td>'
+            f'<td><span class="tag {"bad" if r["weeks_used"] < 8 else "ok"}">'
+            f'{"水準が不安定" if r["weeks_used"] < 8 else "使える"}</span></td></tr>'
+            for _, r in mt.sort_values("weeks_used", ascending=False).iterrows()
+        )
+        maturity_tbl = (
+            '<table><thead><tr><th class="l">店舗</th><th>オープン日</th>'
+            '<th>経過週</th><th>除外した週</th><th>水準に使った週</th>'
+            '<th>判定</th></tr></thead>'
+            f'<tbody>{mrows2}</tbody></table>'
+        )
+
     return f"""
 <h2>4. 数字の根拠と正確性</h2>
+
+<h3>既存店の成熟度</h3>
+<p class="sub">転換・開店の時期が店によって違います。開店直後は需要が跳ねるため、
+各店のオープンから一定週を水準の計算から外しています。
+残った週が少ない店は、水準そのものが不安定です。</p>
+{maturity_tbl}
 
 <h3>LOO検証（1店抜きの実測誤差）</h3>
 <p class="sub">既存{len(a.stores)}店を1店ずつ「新店だと思って」残りから予測し、実績と比べました。
@@ -590,6 +720,7 @@ def render_html(a) -> str:
 <div class="note bad">{DISCLAIMER}</div>
 {_sec_summary(a)}
 {_sec_predictions(a)}
+{_sec_methods(a)}
 {_sec_customers(a)}
 {_sec_accuracy(a)}
 {_sec_risk(a)}
@@ -753,12 +884,28 @@ def write_excel(a, path: str | Path) -> Path:
         for met, dr in a.directions.items() for f in dr.findings
     ])
     checklist = pd.DataFrame(a.checklist)
+    conv_ratio = pd.DataFrame([
+        {"単位": idpos.leaf(cr.unit), "パス": cr.unit,
+         "指標": mcfg.metric_label(cr.metric), "変化率中央値": cr.ratio,
+         "店舗間最小": cr.lo, "店舗間最大": cr.hi, "店舗数": cr.n_stores,
+         "1店抜き誤差%": cr.loo_mape,
+         **{f"倍率_{n}": v for n, v in cr.by_store.items()}}
+        for cr in (a.conversion.ratios.values() if a.conversion else [])
+    ])
+    maturity = (a.idpos.maturity.assign(
+        店舗=lambda d: d["store_id"].map(lambda x: idpos.store_names.get(str(x), x)))
+        if a.idpos.maturity is not None and not a.idpos.maturity.empty
+        else pd.DataFrame())
 
     with pd.ExcelWriter(path, engine="openpyxl") as xw:
         disclaimer.to_excel(xw, sheet_name="0_注意事項", index=False)
         summary.to_excel(xw, sheet_name="1_商圏と類似店", index=False)
         ranking.to_excel(xw, sheet_name="1b_類似店ランキング", index=False)
         preds.to_excel(xw, sheet_name="2_予測", index=False)
+        if not conv_ratio.empty:
+            conv_ratio.to_excel(xw, sheet_name="2b_転換前後の変化率", index=False)
+        if not a.method_compare.empty:
+            a.method_compare.to_excel(xw, sheet_name="2c_手法比較", index=False)
         if not age.empty:
             age.to_excel(xw, sheet_name="3_顧客層", index=False)
         if not age_unit.empty:
@@ -767,6 +914,8 @@ def write_excel(a, path: str | Path) -> Path:
         if not a.level_scan.empty:
             a.level_scan.to_excel(xw, sheet_name="4b_粒度別精度", index=False)
         ranges.to_excel(xw, sheet_name="4c_範囲チェック", index=False)
+        if not maturity.empty:
+            maturity.to_excel(xw, sheet_name="4e_店舗の成熟度", index=False)
         if not directions.empty:
             directions.to_excel(xw, sheet_name="4d_方向性仮説", index=False)
         if not risks.empty:

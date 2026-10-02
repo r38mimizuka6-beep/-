@@ -394,3 +394,130 @@ def test_level_scan_degrades_or_holds(cfg, mcfg):
     )
     assert not a.level_scan.empty
     assert {"粒度", "単位数", "LOO平均誤差%", "週次変動の中央値%"} <= set(a.level_scan.columns)
+
+
+# ---------------- 開店時期のばらつき ----------------
+
+OPENS = {"0101": "2025-11-28", "0102": "2026-02-20", "0103": "2026-04-17",
+         "0104": "2026-07-10", "0105": "2026-08-07"}
+
+
+def test_opening_weeks_are_excluded(mcfg):
+    """開店直後の需要が水準に混ざらないこと。"""
+    raw = load_idpos(S / "idpos_sample.csv.gz", S / "ure_zaiko_sample.csv.gz",
+                     mcfg, level="line")
+    trimmed = load_idpos(S / "idpos_sample.csv.gz", S / "ure_zaiko_sample.csv.gz",
+                         mcfg, level="line", opening_dates=OPENS)
+    assert not trimmed.maturity.empty
+    assert (trimmed.maturity["weeks_excluded"] > 0).any()
+    # 開店効果を除くと水準は下がるはず
+    a = raw.value("0101", "精肉", "pi")
+    b = trimmed.value("0101", "精肉", "pi")
+    assert a is not None and b is not None and b < a
+
+
+def test_immature_store_is_flagged(mcfg):
+    d = load_idpos(S / "idpos_sample.csv.gz", S / "ure_zaiko_sample.csv.gz",
+                   mcfg, level="line", opening_dates=OPENS)
+    m = d.maturity
+    newest = m.sort_values("weeks_used").iloc[0]
+    assert newest["weeks_used"] < 8
+    assert any("週しかありません" in w for w in d.warnings)
+
+
+def test_exclude_opening_weeks_override(mcfg):
+    d = load_idpos(S / "idpos_sample.csv.gz", S / "ure_zaiko_sample.csv.gz",
+                   mcfg, level="line", opening_dates=OPENS, exclude_opening_weeks=0)
+    assert (d.maturity["weeks_excluded"] == 0).all()
+
+
+# ---------------- 客数と構成比 ----------------
+
+def test_share_metrics_sum_to_one(mcfg):
+    """低温内の構成比なので、店舗ごとに合計1になる。"""
+    d = load_idpos(S / "idpos_sample.csv.gz", S / "ure_zaiko_sample.csv.gz",
+                   mcfg, level="category", opening_dates=OPENS)
+    assert "gp_share" in d.metrics and "sales_share" in d.metrics
+    for sid in d.store_ids:
+        for metric in ("sales_share", "gp_share"):
+            vals = [d.value(sid, u, metric) for u in d.units]
+            vals = [v for v in vals if v is not None]
+            if vals:
+                assert abs(sum(vals) - 1.0) < 0.02, (sid, metric, sum(vals))
+
+
+def test_per_customer_metrics_need_customers_file(mcfg):
+    without = load_idpos(S / "idpos_sample.csv.gz", S / "ure_zaiko_sample.csv.gz",
+                         mcfg, level="line", opening_dates=OPENS)
+    assert "gp_pi" not in without.metrics
+    assert any("客数" in w for w in without.warnings)
+    with_c = load_idpos(S / "idpos_sample.csv.gz", S / "ure_zaiko_sample.csv.gz",
+                        mcfg, level="line", opening_dates=OPENS,
+                        customers_path=S / "customers_sample.csv.gz")
+    assert "amount_pi" in with_c.metrics and "gp_pi" in with_c.metrics
+
+
+def test_amount_pi_matches_quantity_pi_times_price(mcfg):
+    """金額PI ≒ 数量PI × 単価 になっていること（単位系の取り違え検出）。"""
+    d = load_idpos(S / "idpos_sample.csv.gz", S / "ure_zaiko_sample.csv.gz",
+                   mcfg, level="category", opening_dates=OPENS,
+                   customers_path=S / "customers_sample.csv.gz")
+    unit = next(u for u in d.units if u.endswith("納豆"))
+    q = d.value("0101", unit, "pi")
+    a = d.value("0101", unit, "amount_pi")
+    price = a / q                      # 1点あたりの単価に相当するはず
+    assert 30 < price < 2000, f"単価が {price:.0f} 円は不自然（単位系を確認）"
+
+
+# ---------------- 転換前後法 ----------------
+
+@pytest.fixture(scope="module")
+def conversion_analysis():
+    return run_analysis(
+        config_path=CFG, metrics_path=MCFG,
+        master_path=S / "store_master.csv", new_store_path=S / "new_store.csv",
+        idpos_path=S / "idpos_sample.csv.gz",
+        margin_path=S / "ure_zaiko_sample.csv.gz",
+        customers_path=S / "customers_sample.csv.gz",
+        prior_idpos_path=S / "idpos_prior_sample.csv.gz",
+        prior_margin_path=S / "ure_zaiko_prior_sample.csv.gz",
+        prior_customers_path=S / "customers_prior_sample.csv.gz",
+        baseline_idpos_path=S / "idpos_newstore_baseline.csv.gz",
+        baseline_margin_path=S / "ure_zaiko_newstore_baseline.csv.gz",
+        baseline_customers_path=S / "customers_newstore.csv.gz",
+        level="line", level_scan=False,
+    )
+
+
+def test_conversion_ratios_recover_planted_effect(conversion_analysis):
+    """ダミーは精肉1.30倍・フローズン1.25倍で作ってある。"""
+    r = {u: cr for (u, m), cr in conversion_analysis.conversion.ratios.items()
+         if m == "pi"}
+    assert 1.15 < r["精肉"].ratio < 1.45
+    assert 1.10 < r["フローズン"].ratio < 1.70
+    assert 0.95 < r["和日配"].ratio < 1.20
+
+
+def test_conversion_prediction_equals_baseline_times_ratio(conversion_analysis):
+    for c in conversion_analysis.conversion.predictions:
+        assert c.point == pytest.approx(c.baseline * c.ratio.ratio, rel=1e-9)
+
+
+def test_conversion_beats_similar_on_dummy(conversion_analysis):
+    """立地を固定する分、商圏から横に当てるより当たるはず。"""
+    cmp_df = conversion_analysis.method_compare
+    assert not cmp_df.empty
+    wins = (cmp_df["better"] == "転換前後法").sum()
+    assert wins > len(cmp_df) / 2, f"転換前後法の勝ちが {wins}/{len(cmp_df)} しかない"
+
+
+def test_conversion_absent_without_prior(analysis):
+    assert analysis.conversion is None
+    assert "もう一つの予測方法" in render_html(analysis)
+
+
+def test_conversion_section_rendered(conversion_analysis):
+    html = render_html(conversion_analysis)
+    assert "2-2. 転換前後法" in html
+    assert "業態転換による変化率" in html
+    assert "既存店の成熟度" in html

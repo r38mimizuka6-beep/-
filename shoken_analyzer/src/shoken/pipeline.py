@@ -15,6 +15,7 @@ from . import customers as customers_mod
 from . import direction as direction_mod
 from . import rangecheck as range_mod
 from . import risk as risk_mod
+from .conversion import ConversionResult, compare_methods, run_conversion
 from .config import Config
 from .idpos import LEVELS, IdposData, load_idpos
 from .io_loader import load_new_store, load_store_master
@@ -46,6 +47,9 @@ class Analysis:
     checklist: list[dict]
     peers: list[Any]
     level_scan: pd.DataFrame
+    conversion: ConversionResult | None = None
+    method_compare: pd.DataFrame = field(default_factory=pd.DataFrame)
+    customers_known: bool = False
     warnings: list[str] = field(default_factory=list)
 
     @property
@@ -71,6 +75,13 @@ def run_analysis(
     new_store_path: str | Path,
     idpos_path: str | Path,
     margin_path: str | Path | None = None,
+    customers_path: str | Path | None = None,
+    prior_idpos_path: str | Path | None = None,
+    prior_margin_path: str | Path | None = None,
+    prior_customers_path: str | Path | None = None,
+    baseline_idpos_path: str | Path | None = None,
+    baseline_margin_path: str | Path | None = None,
+    baseline_customers_path: str | Path | None = None,
     search_path: str | Path | None = None,
     level: str | None = None,
     weight_overrides: dict[str, float] | None = None,
@@ -95,8 +106,19 @@ def run_analysis(
         stores = add_derived(stores, cfg)
         new_store = add_derived(pd.DataFrame([new_store]), cfg).iloc[0]
 
-    idpos = load_idpos(idpos_path, margin_path, mcfg, level=level)
+    # 開店・改装オープン日を商圏マスタから拾い、開店直後の週を水準から外す
+    opens = _opening_dates(stores, cfg)
+    opens.update(_opening_dates(pd.DataFrame([new_store]), cfg))
+
+    idpos = load_idpos(idpos_path, margin_path, mcfg, level=level,
+                       opening_dates=opens, customers_path=customers_path)
     warnings += idpos.warnings
+    if not opens:
+        warnings.append(
+            "商圏マスタに open_date（開店・改装オープン日）が入っていません。"
+            "転換時期が店ごとに違う場合、開店直後の需要が水準に混ざり、"
+            "店舗間の比較が歪みます。必ず入れてください。"
+        )
 
     # 店舗CDの突き合わせ
     master_ids = set(stores[cfg.id_key].astype(str))
@@ -104,10 +126,23 @@ def run_analysis(
     missing = sorted(master_ids - idpos_ids)
     extra = sorted(idpos_ids - master_ids)
     if missing:
-        warnings.append(
-            f"商圏マスタにあってIDPOSに無い店舗CD: {missing}。"
-            "この店は予測の材料になりません。店舗CDの桁（先頭ゼロ）を確認してください。"
-        )
+        excluded_all = set()
+        if not idpos.maturity.empty:
+            m = idpos.maturity
+            excluded_all = set(m.loc[m["weeks_used"] <= 0, "store_id"].astype(str))
+        immature = [s_ for s_ in missing if s_ in excluded_all]
+        unknown = [s_ for s_ in missing if s_ not in excluded_all]
+        if immature:
+            warnings.append(
+                f"開店から日が浅く、使える週が残らなかった店舗: {immature}。"
+                "開店効果を除くと水準が測れないため、予測の材料から外しました。"
+                "週がたまれば自動的に戻ります。"
+            )
+        if unknown:
+            warnings.append(
+                f"商圏マスタにあってIDPOSに無い店舗CD: {unknown}。"
+                "店舗CDの桁（先頭ゼロ）が合っているか確認してください。"
+            )
     if extra:
         warnings.append(f"IDPOSにあって商圏マスタに無い店舗CD: {extra}（無視します）。")
     stores = stores[stores[cfg.id_key].astype(str).isin(idpos_ids)].reset_index(drop=True)
@@ -174,7 +209,27 @@ def run_analysis(
     rural_gaps = (direction_mod.urban_vs_rural_gaps(stores, idpos.frame("pi"), cfg, rural_ids)
                   if "pi" in idpos.metrics else [])
 
-    scan = (_level_scan(cfg, mcfg, stores, idpos_path, margin_path, weight_overrides)
+    # ---- 転換前後法 ----
+    conversion = None
+    compare = pd.DataFrame()
+    if prior_idpos_path:
+        prior = load_idpos(prior_idpos_path, prior_margin_path, mcfg, level=idpos.level,
+                           customers_path=prior_customers_path,
+                           exclude_opening_weeks=0)
+        baseline = None
+        if baseline_idpos_path:
+            baseline = load_idpos(baseline_idpos_path, baseline_margin_path, mcfg,
+                                  level=idpos.level,
+                                  customers_path=baseline_customers_path,
+                                  exclude_opening_weeks=0)
+        conversion = run_conversion(prior, idpos, baseline,
+                                    str(new_store[cfg.id_key]), mcfg)
+        warnings += conversion.warnings
+        if conversion.predictions:
+            compare = compare_methods(predictions, conversion, mcfg, loo)
+
+    scan = (_level_scan(cfg, mcfg, stores, idpos_path, margin_path, weight_overrides,
+                        opens)
             if level_scan else pd.DataFrame())
 
     chk = checklist_mod.build_checklist(
@@ -189,11 +244,26 @@ def run_analysis(
         ranges=ranges, confidence=confidence, loo=loo, predictions=predictions,
         age_mix=age_mix, age_mix_by_unit=age_by_unit, risks=risks,
         directions=directions, rural_gaps=rural_gaps, checklist=chk,
-        peers=peers, level_scan=scan, warnings=warnings,
+        peers=peers, level_scan=scan, conversion=conversion,
+        method_compare=compare,
+        customers_known=("gp_pi" in idpos.metrics),
+        warnings=warnings,
     )
 
 
-def _level_scan(cfg, mcfg, stores, idpos_path, margin_path, weight_overrides) -> pd.DataFrame:
+def _opening_dates(df: pd.DataFrame, cfg: Config) -> dict[str, str]:
+    if "open_date" not in df.columns:
+        return {}
+    out = {}
+    for _, r in df.iterrows():
+        v = r.get("open_date")
+        if v is not None and pd.notna(v) and str(v).strip():
+            out[str(r[cfg.id_key])] = str(v).strip()
+    return out
+
+
+def _level_scan(cfg, mcfg, stores, idpos_path, margin_path, weight_overrides,
+                opens=None) -> pd.DataFrame:
     """粒度を下げると予測精度がどこで崩れるかを測る。
 
     サブカテゴリーまで下げれば提案は具体的になるが、1セルあたりの数字は
@@ -202,7 +272,8 @@ def _level_scan(cfg, mcfg, stores, idpos_path, margin_path, weight_overrides) ->
     rows = []
     for lv in ("line", "department", "category", "subcategory"):
         try:
-            d = load_idpos(idpos_path, margin_path, mcfg, level=lv)
+            d = load_idpos(idpos_path, margin_path, mcfg, level=lv,
+                           opening_dates=opens)
         except Exception:
             continue
         if not d.units:

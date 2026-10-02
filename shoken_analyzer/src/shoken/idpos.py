@@ -143,6 +143,7 @@ class IdposData:
     level: str
     age_bands: list[str]
     age_unknown_share: dict[str, float]   # store -> 年代不明の売上シェア
+    maturity: pd.DataFrame = field(default_factory=pd.DataFrame)  # 店舗ごとの週数と経過
     warnings: list[str] = field(default_factory=list)
 
     def level_label(self) -> str:
@@ -186,7 +187,15 @@ def load_idpos(
     mcfg: MetricsConfig,
     *,
     level: str | None = None,
+    opening_dates: dict[str, str] | None = None,
+    customers_path: str | Path | None = None,
+    exclude_opening_weeks: int | None = None,
 ) -> IdposData:
+    """opening_dates を渡すと、各店の開店直後の週を水準の計算から外す。
+
+    転換時期が店ごとに違うと、開店効果が残っている店の水準が高く出て、
+    店舗間の比較が歪む。ここで揃えておかないと類似店法そのものが狂う。
+    """
     spec = mcfg.idpos
     enc = spec.get("encoding", "cp932")
     level = level or spec.get("level", "line")
@@ -283,6 +292,48 @@ def load_idpos(
         pi=("pi", "sum"), sales_amount=("sales_amount", "sum")
     )
 
+    # ---- 開店・改装直後の週を落とす ----
+    skip_w = int(spec.get("exclude_opening_weeks", 0)
+                 if exclude_opening_weeks is None else exclude_opening_weeks)
+    maturity_rows = []
+    if opening_dates:
+        keep = pd.Series(True, index=agg.index)
+        for sid, g in agg.groupby("store_id"):
+            od = opening_dates.get(str(sid))
+            od_ts = pd.to_datetime(od, errors="coerce") if od else pd.NaT
+            total = len(g)
+            if pd.isna(od_ts):
+                maturity_rows.append({"store_id": sid, "open_date": None,
+                                      "weeks_total": total, "weeks_excluded": 0,
+                                      "weeks_used": total, "weeks_since_open": None})
+                continue
+            cutoff = od_ts + pd.Timedelta(weeks=skip_w)
+            drop = g["week_date"].notna() & (g["week_date"] < cutoff)
+            keep.loc[g.index[drop]] = False
+            since = g["week_date"].max()
+            maturity_rows.append({
+                "store_id": sid, "open_date": od_ts.date().isoformat(),
+                "weeks_total": total, "weeks_excluded": int(drop.sum()),
+                "weeks_used": total - int(drop.sum()),
+                "weeks_since_open": (int((since - od_ts).days // 7)
+                                     if pd.notna(since) else None),
+            })
+        agg = agg[keep]
+        if skip_w:
+            warnings.append(
+                f"各店の開店・改装オープンから{skip_w}週間を水準の計算から外しました"
+                "（開店効果で水準が高く出るため）。"
+            )
+    maturity = pd.DataFrame(maturity_rows)
+    if not maturity.empty:
+        thin = maturity[maturity["weeks_used"] < int(spec.get("min_weeks", 8))]
+        for _, r in thin.iterrows():
+            warnings.append(
+                f"店舗{r['store_id']}は開店効果を除いた週が{int(r['weeks_used'])}週しかありません"
+                f"（オープン{r['open_date']}）。この店の水準は不安定で、"
+                "類似店に選ばれた場合の予測も不安定になります。"
+            )
+
     # ---- 粗利ファイル ----
     if margin_path:
         mspec = spec["margin_file"]
@@ -328,20 +379,48 @@ def load_idpos(
         warnings.append("粗利ファイルが指定されていないため、粗利率は出力しません。")
 
     # ---- 派生指標 ----
-    pi_kind = spec.get("pi_kind", "amount")
     metric_keys = ["pi"]
     if agg["gross_margin_rate"].notna().any():
         metric_keys.append("gross_margin_rate")
     agg["sales_per_week"] = agg["sales_amount"]
     if agg["sales_per_week"].notna().any():
         metric_keys.append("sales_per_week")
-    if pi_kind == "amount" and "gross_margin_rate" in metric_keys:
-        agg["gp_pi"] = agg["pi"] * agg["gross_margin_rate"]
-        metric_keys.append("gp_pi")
+
+    # 低温全体に占める構成比。客数も店舗規模も効かないので店舗間でそのまま比べられる。
+    totals = agg.groupby(["store_id", "year", "week"], as_index=False).agg(
+        _tot_sales=("sales_amount", "sum"), _tot_gp=("gross_profit", "sum")
+    )
+    agg = agg.merge(totals, on=["store_id", "year", "week"], how="left")
+    for key, num, den in (("sales_share", "sales_amount", "_tot_sales"),
+                          ("gp_share", "gross_profit", "_tot_gp")):
+        if num in agg.columns and agg[num].notna().any():
+            agg[key] = np.where(agg[den] > 0, agg[num] / agg[den], np.nan)
+            if agg[key].notna().any():
+                metric_keys.append(key)
+    agg = agg.drop(columns=[c for c in ("_tot_sales", "_tot_gp") if c in agg.columns])
+
+    # 客数が分かる場合だけ、金額PI・粗利PIを出す
+    if customers_path:
+        cust = _load_customers(customers_path, spec, enc)
+        before = len(agg)
+        agg = agg.merge(cust, on=["store_id", "year", "week"], how="left")
+        hit = agg["customers"].notna().mean() if before else 0.0
+        if hit < 0.5:
+            warnings.append(
+                f"客数ファイルと突き合わせられた週が{hit:.0%}しかありません。"
+                "年週の表記か店舗CDを確認してください。"
+            )
+        with np.errstate(divide="ignore", invalid="ignore"):
+            agg["amount_pi"] = agg["sales_amount"] / agg["customers"] * 1000
+            agg["gp_pi"] = agg["gross_profit"] / agg["customers"] * 1000
+        for k in ("amount_pi", "gp_pi"):
+            if agg[k].notna().any():
+                metric_keys.append(k)
     else:
         warnings.append(
-            "PI値が数量ベース（pi_kind: quantity）の設定のため、粗利PIは計算していません。"
-            "PI値が金額ベースなら config/metrics.yaml の idpos.pi_kind を amount にしてください。"
+            "PI値は数量ベースのため、粗利額を客1人あたりに直すには客数が要ります。"
+            "客数ファイル（店舗CD × 年週 × レジ通過客数）を渡すと金額PI・粗利PIも出せます。"
+            "今は客数の要らない「低温内の粗利額構成比」で粗利を見ています。"
         )
 
     # ---- 店舗 × 単位 × 指標 の集計 ----
@@ -381,8 +460,20 @@ def load_idpos(
         units=units, unit_parents=unit_parents, metrics=metric_keys,
         store_ids=sorted(set(agg["store_id"])), store_names=store_names,
         level=level, age_bands=age_bands, age_unknown_share=unknown_share,
-        warnings=warnings,
+        maturity=maturity, warnings=warnings,
     )
+
+
+def _load_customers(path: str | Path, spec: dict, enc: str) -> pd.DataFrame:
+    cols = spec.get("customers_file", {}).get("columns", {})
+    df = _read_csv(path, enc)
+    df, _ = _rename(df, cols, path, "客数ファイル")
+    df["store_id"] = df["store_code"].astype(str).str.strip()
+    yw = df["year_week"].map(parse_year_week)
+    df["year"] = [a for a, _ in yw]
+    df["week"] = [b for _, b in yw]
+    df["customers"] = _num(df["customers"])
+    return (df.groupby(["store_id", "year", "week"], as_index=False)["customers"].sum())
 
 
 # ---------------------------------------------------------------- 補助

@@ -19,6 +19,8 @@ from .io_loader import InputError, _read_any
 SEARCH_COLUMNS: list[tuple[str, str, str]] = [
     # (key, 見出し, 調べ方のヒント)
     ("address",            "住所",                 "店舗名で検索し、公式サイトか地図サービスの住所"),
+    ("open_date",          "開店・改装オープン日",  "YYYY-MM-DD。業態転換ならその日。開店直後の週を除外するのに必須"),
+    ("nearest_station",    "最寄駅名",             "路線名も入れる"),
     ("nearest_station_m",  "最寄駅までの距離(m)",   "地図で徒歩ルートの距離。複数路線なら最も近い駅"),
     ("station_daily_users", "最寄駅1日乗降客数",    "鉄道会社の駅別乗降人員データ（直近年度）"),
     ("parking_spaces",     "駐車場台数",           "公式サイトの店舗情報。記載が無ければ航空写真で概算"),

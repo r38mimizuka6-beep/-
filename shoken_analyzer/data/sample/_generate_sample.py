@@ -24,7 +24,7 @@ START_YEAR, START_WEEK = 2025, 40
 
 # ---------------------------------------------------------------- 店舗
 STORES = [
-    dict(store_id="0101", store_name="都心A店", kind="urban_single",
+    dict(store_id="0101", store_name="都心A店", kind="urban_single", open_date="2025-11-28",
          pop_total=204_382, pop_density=14_800, hh_total=109_917, hh_avg_size=1.86,
          age_share_0_14=0.113, age_share_15_29=0.216, age_share_30_44=0.237,
          age_share_45_64=0.269, age_share_65plus=0.166,
@@ -45,7 +45,7 @@ STORES = [
          sales_floor_sqm=980, fresh_strength=3, deli_strength=4, price_level=3,
          pb_ratio=0.11, store_format="都市型SM", weekly_customers=26_000),
 
-    dict(store_id="0102", store_name="駅前B店", kind="urban_office",
+    dict(store_id="0102", store_name="駅前B店", kind="urban_office", open_date="2026-02-20",
          pop_total=98_400, pop_density=18_200, hh_total=62_100, hh_avg_size=1.58,
          age_share_0_14=0.072, age_share_15_29=0.268, age_share_30_44=0.271,
          age_share_45_64=0.250, age_share_65plus=0.139,
@@ -66,7 +66,7 @@ STORES = [
          sales_floor_sqm=620, fresh_strength=2, deli_strength=5, price_level=4,
          pb_ratio=0.08, store_format="駅前小型SM", weekly_customers=31_000),
 
-    dict(store_id="0103", store_name="住宅街C店", kind="urban_family",
+    dict(store_id="0103", store_name="住宅街C店", kind="urban_family", open_date="2026-04-17",
          pop_total=142_600, pop_density=9_400, hh_total=58_900, hh_avg_size=2.42,
          age_share_0_14=0.148, age_share_15_29=0.166, age_share_30_44=0.248,
          age_share_45_64=0.277, age_share_65plus=0.161,
@@ -87,7 +87,7 @@ STORES = [
          sales_floor_sqm=1_380, fresh_strength=4, deli_strength=3, price_level=3,
          pb_ratio=0.14, store_format="郊外型SM（市街地）", weekly_customers=24_000),
 
-    dict(store_id="0104", store_name="旧市街D店", kind="urban_senior",
+    dict(store_id="0104", store_name="旧市街D店", kind="urban_senior", open_date="2026-07-10",
          pop_total=88_200, pop_density=11_100, hh_total=44_600, hh_avg_size=1.98,
          age_share_0_14=0.089, age_share_15_29=0.151, age_share_30_44=0.196,
          age_share_45_64=0.284, age_share_65plus=0.280,
@@ -108,7 +108,7 @@ STORES = [
          sales_floor_sqm=860, fresh_strength=4, deli_strength=3, price_level=2,
          pb_ratio=0.17, store_format="都市型SM", weekly_customers=18_000),
 
-    dict(store_id="0105", store_name="郊外E店", kind="rural_car",
+    dict(store_id="0105", store_name="郊外E店", kind="rural_car", open_date="2026-08-07",
          pop_total=46_300, pop_density=1_850, hh_total=17_200, hh_avg_size=2.69,
          age_share_0_14=0.132, age_share_15_29=0.138, age_share_30_44=0.213,
          age_share_45_64=0.288, age_share_65plus=0.229,
@@ -131,7 +131,7 @@ STORES = [
 ]
 
 NEW_STORE = dict(
-    store_id="0199", store_name="新店（仮称）○○店", kind="new",
+    store_id="0199", store_name="新店（仮称）○○店", kind="new", open_date="2026-11-20",
     pop_total=168_900, pop_density=12_300, hh_total=81_400, hh_avg_size=2.07,
     age_share_0_14=0.124, age_share_15_29=0.198, age_share_30_44=0.251,
     age_share_45_64=0.265, age_share_65plus=0.162,
@@ -188,6 +188,24 @@ HIER = [
      {"day_night_ratio": 1.1, "hh_share_single": 0.7}, [20, 30, 40]),
 ]
 
+# 業態転換の効果（転換後 ÷ 転換前）。店ごとに ±8% ばらつかせる。
+CONVERSION = {
+    "和日配":     {"pi": 1.05, "gm": 0.92},
+    "洋日配":     {"pi": 1.10, "gm": 0.95},
+    "フローズン": {"pi": 1.25, "gm": 0.98},
+    "精肉":       {"pi": 1.30, "gm": 0.90},
+    "パン":       {"pi": 1.15, "gm": 0.97},
+}
+
+# ダミーの平均単価（円）。数量PIから売上を作るために使う。
+UNIT_PRICE = {
+    "納豆": 110, "豆腐": 95, "練物": 180,
+    "牛乳": 230, "ヨーグルト": 165, "デザート": 140,
+    "冷凍麺": 220, "冷凍米飯": 260, "アイス": 180,
+    "牛肉": 680, "豚肉": 420, "鶏肉": 350,
+    "食パン": 160, "菓子パン": 130, "惣菜パン": 180,
+}
+
 AGE_BANDS = ["10代", "20代", "30代", "40代", "50代", "60代", "70代以上"]
 AGE_KEY = {"10代": "age_dec_10s", "20代": "age_dec_20s", "30代": "age_dec_30s",
            "40代": "age_dec_40s", "50代": "age_dec_50s", "60代": "age_dec_60s",
@@ -203,8 +221,11 @@ SEASON_CAT = {"アイス": {7: 1.55, 8: 1.62, 6: 1.30, 9: 1.15, 1: 0.62, 2: 0.60
               "豆腐": {12: 1.20, 1: 1.12, 7: 1.08}}
 
 
-def year_weeks(n: int) -> list[tuple[int, int]]:
-    out, y, w = [], START_YEAR, START_WEEK
+import datetime as _dt
+
+
+def all_weeks(start=(2024, 40), n=140) -> list[tuple[int, int]]:
+    out, y, w = [], *start
     for _ in range(n):
         out.append((y, w))
         w += 1
@@ -213,12 +234,15 @@ def year_weeks(n: int) -> list[tuple[int, int]]:
     return out
 
 
-def month_of(y: int, w: int) -> int:
-    import datetime as dt
+def week_monday(y: int, w: int) -> _dt.date:
     try:
-        return dt.date.fromisocalendar(y, min(w, 52), 1).month
+        return _dt.date.fromisocalendar(y, min(w, 52), 1)
     except ValueError:
-        return 1
+        return _dt.date.fromisocalendar(y, 52, 1)
+
+
+def month_of(y: int, w: int) -> int:
+    return week_monday(y, w).month
 
 
 def zscores(stores: list[dict], keys: list[str]) -> pd.DataFrame:
@@ -226,13 +250,23 @@ def zscores(stores: list[dict], keys: list[str]) -> pd.DataFrame:
     return (df - df.mean()) / df.std(ddof=1)
 
 
+PI_COLS = ["年週", "ゾーンCD", "ゾーン", "エリアCD", "エリア", "チームCD", "チーム",
+           "店舗CD", "店舗", "事業部CD", "事業部", "ディビジョンCD", "ディビジョン",
+           "ラインCD", "ライン", "部門CD", "部門", "カテゴリーCD", "カテゴリー",
+           "サブカテゴリーCD", "サブカテゴリー", "顧客種類", "年代",
+           "売上税抜金額(円)", "PI値"]
+MG_COLS = ["年週", "ゾーンCD", "ゾーン名", "エリアCD", "エリア名", "店舗CD", "店舗名",
+           "ディビジョンCD", "ディビジョン名", "ラインCD", "ライン名",
+           "部門CD", "部門名", "カテゴリーCD", "カテゴリー名",
+           "サブカテゴリーCD", "サブカテゴリー名", "販売荒利高(千円)", "販売荒利率"]
+CUST_COLS = ["店舗CD", "年週", "レジ通過客数"]
+
+
 def main() -> None:
-    # 派生変数はここで先に足しておく（ドライバに使うため）
     for st in STORES + [NEW_STORE]:
         st["day_night_ratio"] = st["daytime_pop"] / st["nighttime_pop"]
     drivers = sorted({d for *_, dd, _ in HIER for d in dd})
     z = zscores(STORES, drivers)
-    # 新店は既存5店の平均・SDで標準化する
     base = pd.DataFrame(STORES)[drivers].astype(float)
     z_new = (pd.Series({k: NEW_STORE[k] for k in drivers}, dtype=float)
              - base.mean()) / base.std(ddof=1)
@@ -240,99 +274,140 @@ def main() -> None:
     master = pd.DataFrame(STORES).drop(columns=["kind", "weekly_customers"])
     new = pd.DataFrame([NEW_STORE]).drop(columns=["kind", "weekly_customers"])
     master.to_csv(OUT / "store_master.csv", index=False, encoding="utf-8-sig")
-    new[list(master.columns)].to_csv(OUT / "new_store.csv", index=False, encoding="utf-8-sig")
+    new[list(master.columns)].to_csv(OUT / "new_store.csv", index=False,
+                                     encoding="utf-8-sig")
 
-    yws = year_weeks(N_WEEKS)
-    pi_rows, mg_rows = [], []
+    weeks = all_weeks()
+    today = _dt.date(2026, 10, 2)
+    weeks = [(y, w) for (y, w) in weeks if week_monday(y, w) <= today]
 
-    def emit(store: dict, zrow, yws_, store_idx: int | None):
+    pi_rows, mg_rows, cust_rows = [], [], []
+
+    def emit(store: dict, zrow, weeks_for_store=None) -> None:
+        weeks_ = weeks_for_store or weeks
         cust = store["weekly_customers"]
+        opened = _dt.date.fromisoformat(store["open_date"])
+        # 店ごとの転換効果のゆらぎ
+        conv_jitter = {line: rng.normal(1.0, 0.08) for line, *_ in
+                       {(h[0],) for h in HIER}}
+        for (y, wk) in weeks_:
+            d = week_monday(y, wk)
+            if d < opened and (opened - d).days > 365:
+                continue
+            cust_rows.append((store["store_id"], f"{y}{wk:02d}",
+                              int(cust * rng.normal(1.0, 0.06))))
         for li, (line, dept, cat, subs, base_pi, base_gm, dd, _ages) in enumerate(HIER):
-            # 商圏によるこの店の水準（既存店は z、新店は z_new）
             mult = 1.0 + sum(coef * float(zrow[d]) for d, coef in dd.items()) * 0.12
             mult = max(mult, 0.35)
             gm_store = base_gm * (1 + 0.04 * float(zrow.get("hh_income_avg", 0.0)))
-            # 年代構成（商圏 × 来店バイアス）
-            w = np.array([max(store[AGE_KEY[b]], 1e-6) * VISIT_BIAS[b] for b in AGE_BANDS])
-            w = w / w.sum()
+            cv = CONVERSION[line]
+            jit = conv_jitter.get(line, 1.0)
+            w_age = np.array([max(store[AGE_KEY[b]], 1e-6) * VISIT_BIAS[b]
+                              for b in AGE_BANDS])
+            w_age = w_age / w_age.sum()
             for si, sub in enumerate(subs):
                 share = 0.62 if si == 0 else 0.38
-                for (y, wk) in yws_:
+                for (y, wk) in weeks_:
+                    d = week_monday(y, wk)
+                    post = d >= opened
+                    if not post and (opened - d).days > 365:
+                        continue   # 転換前は直近1年だけ
                     m = month_of(y, wk)
-                    s = SEASON[m] * SEASON_CAT.get(cat, {}).get(m, 1.0)
+                    s_idx = SEASON[m] * SEASON_CAT.get(cat, {}).get(m, 1.0)
+                    # 開店直後3週はご祝儀需要
+                    if post:
+                        elapsed = (week_monday(y, wk) - opened).days // 7
+                        boost = 1.0 + max(0.0, 0.35 - 0.11 * elapsed)
+                    else:
+                        boost = 1.0
+                    pi_f = (cv["pi"] * jit) if post else 1.0
+                    gm_f = cv["gm"] if post else 1.0
                     noise = rng.normal(1.0, 0.055)
-                    pi_total = base_pi * share * mult * s * noise
-                    sales_total = pi_total * cust
-                    # 年代別に割る（若干の週次ゆらぎを足す）
-                    wk_w = w * rng.normal(1.0, 0.04, size=len(w))
-                    wk_w = np.clip(wk_w, 1e-6, None)
+                    pi_total = base_pi * share * mult * s_idx * pi_f * boost * noise
+                    # 数量PI = 点数/1000客 なので、売上 = PI × 客数 ÷ 1000 × 単価
+                    sales_total = pi_total * cust / 1000 * UNIT_PRICE[cat]
+                    wk_w = np.clip(w_age * rng.normal(1.0, 0.04, size=len(w_age)),
+                                   1e-6, None)
                     wk_w = wk_w / wk_w.sum()
-                    for b, ww in zip(AGE_BANDS, wk_w):
-                        pi_rows.append((
-                            f"{y}{wk:02d}", "0077", "STリテール", "0306", "ST第一",
+                    meta = (f"{y}{wk:02d}", "0077", "STリテール", "0306", "ST第一",
                             "0445", "ST第一", store["store_id"], store["store_name"],
                             "0011", "第三事業部", "0054", "低温",
                             f"{li:04d}", line, f"{li:04d}", dept,
-                            f"{li:04d}{si}", cat, f"{si:04d}", sub,
-                            "会員", b,
-                            int(round(sales_total * ww)), round(pi_total * ww, 2),
-                        ))
-                    # 非会員（年代不明）
-                    pi_rows.append((
-                        f"{y}{wk:02d}", "0077", "STリテール", "0306", "ST第一",
-                        "0445", "ST第一", store["store_id"], store["store_name"],
-                        "0011", "第三事業部", "0054", "低温",
-                        f"{li:04d}", line, f"{li:04d}", dept,
-                        f"{li:04d}{si}", cat, f"{si:04d}", sub,
-                        "非会員", "不明",
-                        int(round(sales_total * 0.22)), round(pi_total * 0.22, 2),
-                    ))
-                    gm = np.clip(gm_store * rng.normal(1.0, 0.035), 0.05, 0.60)
-                    gp_sen = sales_total * 1.22 * gm / 1000   # 千円
+                            f"{li:04d}{si}", cat, f"{si:04d}", sub)
+                    for b, ww in zip(AGE_BANDS, wk_w):
+                        pi_rows.append(meta + ("会員", b,
+                                               int(round(sales_total * ww)),
+                                               round(pi_total * ww, 2)))
+                    pi_rows.append(meta + ("非会員", "不明",
+                                           int(round(sales_total * 0.22)),
+                                           round(pi_total * 0.22, 2)))
+                    gm = float(np.clip(gm_store * gm_f * rng.normal(1.0, 0.035),
+                                       0.05, 0.60))
                     mg_rows.append((
                         f"{y}年{wk}週", "0077", "STリテール", "0306", "ST第一",
                         store["store_id"], store["store_name"],
                         "0054", "低温", f"{li:04d}", line, f"{li:04d}", dept,
                         f"{li:04d}{si}", cat, f"{si:04d}", sub,
-                        round(gp_sen, 1), f"{gm * 100:.2f}%",
+                        round(sales_total * 1.22 * gm / 1000, 1), f"{gm * 100:.2f}%",
                     ))
 
-    for i, st in enumerate(STORES):
-        emit(st, z.iloc[i], yws, i)
-    # 新店は直近12週だけ（開店したて）。答え合わせの動作確認用。
-    emit(NEW_STORE, z_new, yws[-12:], None)
+    for i2, st in enumerate(STORES):
+        emit(st, z.iloc[i2])
+    # 新店はオープンが先なので、答え合わせデモ用に8週分だけ先の週も作る
+    future = all_weeks()
+    future = [(y, w) for (y, w) in future
+              if week_monday(y, w) <= _dt.date(2027, 1, 25)]
+    emit(NEW_STORE, z_new, future)
 
-    pi_cols = ["年週", "ゾーンCD", "ゾーン", "エリアCD", "エリア", "チームCD", "チーム",
-               "店舗CD", "店舗", "事業部CD", "事業部", "ディビジョンCD", "ディビジョン",
-               "ラインCD", "ライン", "部門CD", "部門", "カテゴリーCD", "カテゴリー",
-               "サブカテゴリーCD", "サブカテゴリー", "顧客種類", "年代",
-               "売上税抜金額(円)", "PI値"]
-    mg_cols = ["年週", "ゾーンCD", "ゾーン名", "エリアCD", "エリア名", "店舗CD", "店舗名",
-               "ディビジョンCD", "ディビジョン名", "ラインCD", "ライン名",
-               "部門CD", "部門名", "カテゴリーCD", "カテゴリー名",
-               "サブカテゴリーCD", "サブカテゴリー名", "販売荒利高(千円)", "販売荒利率"]
+    pi_df = pd.DataFrame(pi_rows, columns=PI_COLS)
+    mg_df = pd.DataFrame(mg_rows, columns=MG_COLS)
+    cu_df = pd.DataFrame(cust_rows, columns=CUST_COLS)
 
-    pi_df = pd.DataFrame(pi_rows, columns=pi_cols)
-    mg_df = pd.DataFrame(mg_rows, columns=mg_cols)
+    opens = {s["store_id"]: _dt.date.fromisoformat(s["open_date"])
+             for s in STORES + [NEW_STORE]}
 
-    # 既存店分と新店分を分けて出す（新店は答え合わせ用）
-    existing = pi_df[pi_df["店舗CD"] != NEW_STORE["store_id"]]
-    newonly = pi_df[pi_df["店舗CD"] == NEW_STORE["store_id"]]
-    existing.to_csv(OUT / "idpos_sample.csv.gz", index=False, encoding="cp932")
-    newonly.to_csv(OUT / "idpos_newstore_actual.csv.gz", index=False, encoding="cp932")
+    def monday_of(yw: str) -> _dt.date:
+        return week_monday(int(yw[:4]), int(yw[4:]))
 
-    mg_ex = mg_df[mg_df["店舗CD"] != NEW_STORE["store_id"]]
-    mg_new = mg_df[mg_df["店舗CD"] == NEW_STORE["store_id"]]
-    mg_ex.to_csv(OUT / "ure_zaiko_sample.csv.gz", index=False, encoding="cp932")
-    mg_new.to_csv(OUT / "ure_zaiko_newstore_actual.csv.gz", index=False, encoding="cp932")
+    pi_df["_d"] = pi_df["年週"].map(monday_of)
+    pi_df["_post"] = [d >= opens[c] for d, c in zip(pi_df["_d"], pi_df["店舗CD"])]
+    mg_df["_d"] = mg_df["年週"].map(
+        lambda v: week_monday(int(v.split("年")[0]), int(v.split("年")[1].rstrip("週"))))
+    mg_df["_post"] = [d >= opens[c] for d, c in zip(mg_df["_d"], mg_df["店舗CD"])]
+    cu_df["_d"] = cu_df["年週"].map(monday_of)
+    cu_df["_post"] = [d >= opens[c] for d, c in zip(cu_df["_d"], cu_df["店舗CD"])]
+
+    nid = NEW_STORE["store_id"]
+    def dump(df, mask, cols, name):
+        df.loc[mask, cols].to_csv(OUT / name, index=False, encoding="cp932")
+        return int(mask.sum())
+
+    ex = pi_df["店舗CD"] != nid
+    nw = ~ex
+    out = [
+        ("idpos_sample.csv.gz", dump(pi_df, ex & pi_df["_post"], PI_COLS, "idpos_sample.csv.gz")),
+        ("idpos_prior_sample.csv.gz", dump(pi_df, ex & ~pi_df["_post"], PI_COLS, "idpos_prior_sample.csv.gz")),
+        ("idpos_newstore_baseline.csv.gz", dump(pi_df, nw & ~pi_df["_post"], PI_COLS, "idpos_newstore_baseline.csv.gz")),
+        ("idpos_newstore_actual.csv.gz", dump(pi_df, nw & pi_df["_post"], PI_COLS, "idpos_newstore_actual.csv.gz")),
+    ]
+    exm = mg_df["店舗CD"] != nid
+    out += [
+        ("ure_zaiko_sample.csv.gz", dump(mg_df, exm & mg_df["_post"], MG_COLS, "ure_zaiko_sample.csv.gz")),
+        ("ure_zaiko_prior_sample.csv.gz", dump(mg_df, exm & ~mg_df["_post"], MG_COLS, "ure_zaiko_prior_sample.csv.gz")),
+        ("ure_zaiko_newstore_baseline.csv.gz", dump(mg_df, ~exm & ~mg_df["_post"], MG_COLS, "ure_zaiko_newstore_baseline.csv.gz")),
+        ("ure_zaiko_newstore_actual.csv.gz", dump(mg_df, ~exm & mg_df["_post"], MG_COLS, "ure_zaiko_newstore_actual.csv.gz")),
+    ]
+    exc = cu_df["店舗CD"] != nid
+    out += [
+        ("customers_sample.csv.gz", dump(cu_df, exc & cu_df["_post"], CUST_COLS, "customers_sample.csv.gz")),
+        ("customers_prior_sample.csv.gz", dump(cu_df, exc & ~cu_df["_post"], CUST_COLS, "customers_prior_sample.csv.gz")),
+        ("customers_newstore.csv.gz", dump(cu_df, ~exc, CUST_COLS, "customers_newstore.csv.gz")),
+    ]
 
     print("生成しました:")
-    for f, n in (("store_master.csv", len(master)), ("new_store.csv", 1),
-                 ("idpos_sample.csv.gz", len(existing)),
-                 ("ure_zaiko_sample.csv.gz", len(mg_ex)),
-                 ("idpos_newstore_actual.csv.gz", len(newonly)),
-                 ("ure_zaiko_newstore_actual.csv.gz", len(mg_new))):
-        print(f"   {OUT / f}  ({n:,}行)")
+    print(f"   store_master.csv ({len(master)}行) / new_store.csv (1行)")
+    for name, n in out:
+        print(f"   {name}  ({n:,}行)")
 
 
 if __name__ == "__main__":

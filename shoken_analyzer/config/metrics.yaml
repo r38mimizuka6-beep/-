@@ -30,11 +30,12 @@ target_categories:
     aliases: ["パン", "ベーカリー", "日配パン", "パン計", "インストアベーカリー"]
 
 # ---- 予測する指標 ----
-# source は idpos 読み込み後の内部名。CSVの列名は idpos.*_file.columns 側で指定する。
+# PI値は数量ベースなので、粗利額を客1人あたりに直すには客数が要る。
+# 客数ファイル（任意）が無い場合は、客数の要らない「低温内の構成比」で粗利を見る。
 metrics:
   - key: pi
     source: pi
-    label: PI値
+    label: 数量PI値
     kind: pi
     required: true
     higher_is_better: true
@@ -49,19 +50,37 @@ metrics:
   - key: sales_per_week
     source: sales_amount
     label: 週平均売上(円)
-    kind: pi
+    kind: scale
     required: false
     higher_is_better: true
     digits: 0
 
-# 粗利向上が目的なので、実質の主指標はこれ。
-# pi_kind: amount のときだけ計算される。
+# 内部で計算する指標。
+#   share 系は客数も店舗規模も効かないので、店舗間の比較と棚割配分にそのまま使える。
+#   pi 系は客数ファイルを渡したときだけ計算される。
 derived_metrics:
+  - key: gp_share
+    label: 粗利額構成比(低温内)
+    kind: share_within_scope
+    digits: 4
+    note: "その単位の粗利額 ÷ 低温全体の粗利額。客数が不要で、棚の配分に直結する。"
+  - key: sales_share
+    label: 売上構成比(低温内)
+    kind: share_within_scope
+    digits: 4
+    note: "その単位の売上 ÷ 低温全体の売上。"
+  - key: amount_pi
+    label: 金額PI値
+    kind: per_customer
+    digits: 2
+    source_numerator: sales_amount
+    note: "売上 ÷ 客数 × 1000。客数ファイルを渡したときだけ計算される。"
   - key: gp_pi
     label: 粗利PI値
-    formula: "pi * gross_margin_rate"
+    kind: per_customer
     digits: 3
-    note: "PI値 × 粗利率。PI値が金額ベースのときのみ意味を持つ。"
+    source_numerator: gross_profit
+    note: "粗利額 ÷ 客数 × 1000。粗利向上の主指標だが、客数ファイルが要る。"
 
 # ---- 週次IDPOSの読み込み（実データ2ファイル構成） ----
 # IDPOS____.csv      : 年代別のPI値・売上（顧客層の実測値がここにある）
@@ -74,10 +93,21 @@ idpos:
   age_unknown_labels: ["不明", "無し", "未設定", "-", ""]
   customer_type_for_age: "会員"   # 年代構成の算出に使う顧客種類。空にすると全件
 
-  # PI値が金額ベースか数量ベースかで、粗利PIが計算できるかが変わる
-  #   amount   : PI値 = 客1人(or1000人)あたりの売上金額 -> 粗利PI = PI値 × 荒利率
-  #   quantity : PI値 = 客1000人あたりの販売点数       -> 粗利PIは計算しない
-  pi_kind: amount
+  # PI値は数量ベース（客1000人あたりの販売点数）
+  pi_kind: quantity
+
+  # 開店・改装オープン直後の週は需要が跳ねるので、水準の計算から外す。
+  # 商圏マスタの open_date 列（YYYY-MM-DD）を見て店舗ごとに判定する。
+  # open_date が空の店舗は除外しない。
+  exclude_opening_weeks: 8
+
+  # 任意: 店舗×年週のレジ通過客数。渡すと金額PI・粗利PIが計算できる。
+  #   列: store_code, year_week, customers
+  customers_file:
+    columns:
+      store_code: "店舗CD"
+      year_week:  "年週"
+      customers:  "レジ通過客数"
 
   pi_file:
     columns:

@@ -31,9 +31,11 @@ class Metric:
 class DerivedMetric:
     key: str
     label: str
-    formula: str
+    kind: str = "formula"      # formula / share_within_scope / per_customer
+    formula: str = ""
     digits: int = 2
     note: str = ""
+    source_numerator: str = ""
 
 
 @dataclass
@@ -76,6 +78,9 @@ class MetricsConfig:
     @property
     def verification(self) -> dict[str, Any]:
         return self.raw["verification"]
+
+    def derived_of_kind(self, kind: str) -> list[DerivedMetric]:
+        return [d for d in self.derived if d.kind == kind]
 
     @property
     def pi_definition(self) -> str:
