@@ -1,0 +1,64 @@
+﻿要素,列名,項目名,型,軸,必須,取得元の例
+A 商圏の人,pop_total,人口総数,scale,,,商圏レポート（国勢調査ベース）
+A 商圏の人,pop_density,人口密度(人/km2),ratio,,,商圏レポート（国勢調査ベース）
+A 商圏の人,hh_total,世帯数,scale,,,商圏レポート（国勢調査ベース）
+A 商圏の人,hh_avg_size,平均世帯人員,ratio,household,○,商圏レポート（国勢調査ベース）
+A 商圏の人,age_share_0_14,年齢構成比 0-14歳,share,,,商圏レポート（国勢調査ベース）
+A 商圏の人,age_share_15_29,年齢構成比 15-29歳,share,,,商圏レポート（国勢調査ベース）
+A 商圏の人,age_share_30_44,年齢構成比 30-44歳,share,,,商圏レポート（国勢調査ベース）
+A 商圏の人,age_share_45_64,年齢構成比 45-64歳,share,,,商圏レポート（国勢調査ベース）
+A 商圏の人,age_share_65plus,年齢構成比 65歳以上,share,household,○,商圏レポート（国勢調査ベース）
+A 商圏の人,age_cmp_15_29,商圏年齢 15-29歳,share,,,商圏レポート（国勢調査ベース）
+A 商圏の人,age_cmp_30_49,商圏年齢 30-49歳,share,,,商圏レポート（国勢調査ベース）
+A 商圏の人,age_cmp_50_69,商圏年齢 50-69歳,share,,,商圏レポート（国勢調査ベース）
+A 商圏の人,age_cmp_70plus,商圏年齢 70歳以上,share,,,商圏レポート（国勢調査ベース）
+A 商圏の人,hh_share_single,単身世帯比率,share,household,○,商圏レポート（国勢調査ベース）
+A 商圏の人,hh_share_with_child,6歳未満同居世帯比率,share,household,○,商圏レポート（国勢調査ベース）
+A 商圏の人,hh_share_senior,65歳以上同居世帯比率,share,household,○,商圏レポート（国勢調査ベース）
+A 商圏の人,housing_share_owned,持ち家比率,share,,,商圏レポート（国勢調査ベース）
+A 商圏の人,housing_share_rent,民営借家比率,share,,,商圏レポート（国勢調査ベース）
+A 商圏の人,housing_share_apart,共同住宅比率,share,,,商圏レポート（国勢調査ベース）
+A 商圏の人,hh_income_avg,1世帯あたり年収(万円),money,,,商圏レポート（国勢調査ベース）
+A 商圏の人,income_share_u300,年収300万円未満世帯比率,share,,,商圏レポート（国勢調査ベース）
+A 商圏の人,income_share_700p,年収700万円以上世帯比率,share,,,商圏レポート（国勢調査ベース）
+A 商圏の人,daytime_pop,昼間人口,scale,,,商圏レポート（国勢調査ベース）
+A 商圏の人,nighttime_pop,夜間人口,scale,,,商圏レポート（国勢調査ベース）
+A 商圏の人,day_night_ratio,昼夜間人口比,ratio,daynight,○,商圏レポート（国勢調査ベース）
+A 商圏の人,worker_pop,第2次3次産業従業者数,scale,,,商圏レポート（国勢調査ベース）
+A 商圏の人,student_pop,生徒・学生数,scale,,,商圏レポート（国勢調査ベース）
+B アクセス・立地,share_walk,来店手段 徒歩比率,share,,,現地調査・既存店は実測/店頭観察
+B アクセス・立地,share_bike,来店手段 自転車比率,share,,,現地調査・既存店は実測/店頭観察
+B アクセス・立地,share_car,来店手段 車比率,share,mobility,○,現地調査・既存店は実測/店頭観察
+B アクセス・立地,share_train,来店手段 鉄道比率,share,mobility,○,現地調査・既存店は実測/店頭観察
+B アクセス・立地,parking_spaces,駐車場台数,count,,,現地調査・既存店は実測/店頭観察
+B アクセス・立地,nearest_station_m,最寄駅までの距離(m),distance,mobility,○,現地調査・既存店は実測/店頭観察
+B アクセス・立地,station_daily_users,最寄駅1日乗降客数,scale,,,現地調査・既存店は実測/店頭観察
+B アクセス・立地,frontage_traffic,前面道路12h交通量,scale,,,現地調査・既存店は実測/店頭観察
+C 競合,comp_sm_1km,競合SM数(1km内),count,,,地図検索・現地調査
+C 競合,comp_sm_3km,競合SM数(3km内),count,,,地図検索・現地調査
+C 競合,comp_cvs_1km,競合CVS数(1km内),count,,,地図検索・現地調査
+C 競合,comp_drug_1km,競合ドラッグ数(1km内),count,,,地図検索・現地調査
+C 競合,comp_discount_1km,競合ディスカウント数(1km内),count,,,地図検索・現地調査
+C 競合,nearest_comp_m,最寄競合までの距離(m),distance,,,地図検索・現地調査
+C 競合,nearest_comp_price,最寄競合の価格帯(1低-5高),score,,,地図検索・現地調査
+C 競合,own_store_overlap,自社他店との商圏重なり率,share,,,自社マスタ
+D 周辺施設,fac_school,小中学校数,count,,,地図検索
+D 周辺施設,fac_nursery,保育園・幼稚園数,count,,,地図検索
+D 周辺施設,fac_university,大学・専門学校数,count,,,地図検索
+D 周辺施設,fac_hospital,病院数,count,,,地図検索
+D 周辺施設,fac_clinic,診療所数,count,,,地図検索
+D 周辺施設,fac_factory,工場数,count,,,地図検索
+D 周辺施設,fac_office_workers,オフィス就業者数,scale,,,地図検索
+D 周辺施設,fac_apartment_units,集合住宅戸数,scale,,,地図検索
+E 自店の魅力,sales_floor_sqm,売場面積(m2),scale,,,自社マスタ
+E 自店の魅力,fresh_strength,生鮮の強さ(1-5),score,,,自社マスタ
+E 自店の魅力,deli_strength,惣菜の強さ(1-5),score,,,自社マスタ
+E 自店の魅力,price_level,価格政策(1低価格-5高品質),score,,,自社マスタ
+E 自店の魅力,pb_ratio,PB売上構成比,share,,,自社マスタ
+E 自店の魅力,store_format,業態,text,,,自社マスタ
+（自動計算）,-,従業者数/夜間人口,derived,daynight,,式: worker_pop / nighttime_pop
+（自動計算）,-,生徒学生数/夜間人口,derived,daynight,,式: student_pop / nighttime_pop
+（自動計算）,-,事業所密度(件/千人),derived,daynight,,式: comp_cvs_1km / (pop_total / 1000.0)
+（自動計算）,-,徒歩・自転車比率,derived,mobility,,式: share_walk + share_bike
+（自動計算）,-,駐車台数/売場1000m2,derived,mobility,,式: parking_spaces / (sales_floor_sqm / 1000.0)
+（自動計算）,-,競合SM密度(件/km2),derived,,,式: comp_sm_3km / 28.27

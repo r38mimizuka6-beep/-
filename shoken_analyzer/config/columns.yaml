@@ -1,0 +1,153 @@
+# ============================================================
+# 項目定義ファイル（実データ差し替えはこのファイルだけで完結）
+#
+#   key     : ツール内部で使う名前（コードはこれしか見ない）
+#   source  : 実データCSV/Excelでの実際の列名
+#   group   : 4要素（people / access / competition / facility / ownstore）
+#   kind    : share=構成比(0-1) / ratio=比率 / scale=規模 / count=件数
+#             / distance=距離(m) / score=評点 / money=金額 / text=文字列
+#
+# 実データの列名が決まったら source だけ書き換えてください。
+# 項目自体を使わない場合は enabled: false にします。
+# ============================================================
+
+meta:
+  version: "0.1.0"
+  # 全店で商圏定義を揃えること。揃っていないと距離計算の意味が壊れる。
+  trade_area_definition: "自転車10分圏（アクティブ商圏 1次）"
+  id_column: {key: store_id, source: store_id}
+  name_column: {key: store_name, source: store_name}
+
+variables:
+
+  # ---------- A. 商圏の人 ----------
+  - {key: pop_total,            source: pop_total,            label: 人口総数,                   group: people, kind: scale,    enabled: true}
+  - {key: pop_density,          source: pop_density,          label: 人口密度(人/km2),           group: people, kind: ratio,    enabled: true}
+  - {key: hh_total,             source: hh_total,             label: 世帯数,                     group: people, kind: scale,    enabled: true}
+  - {key: hh_avg_size,          source: hh_avg_size,          label: 平均世帯人員,               group: people, kind: ratio,    enabled: true}
+  - {key: age_share_0_14,       source: age_share_0_14,       label: 年齢構成比 0-14歳,          group: people, kind: share,    enabled: true}
+  - {key: age_share_15_29,      source: age_share_15_29,      label: 年齢構成比 15-29歳,         group: people, kind: share,    enabled: true}
+  - {key: age_share_30_44,      source: age_share_30_44,      label: 年齢構成比 30-44歳,         group: people, kind: share,    enabled: true}
+  - {key: age_share_45_64,      source: age_share_45_64,      label: 年齢構成比 45-64歳,         group: people, kind: share,    enabled: true}
+  - {key: age_share_65plus,     source: age_share_65plus,     label: 年齢構成比 65歳以上,        group: people, kind: share,    enabled: true}
+  # 会員の10歳刻みと突き合わせるための年齢区分（軸には使わず、ズレ分析専用）
+  - {key: age_cmp_15_29,        source: age_cmp_15_29,        label: 商圏年齢 15-29歳,           group: people, kind: share,    enabled: true}
+  - {key: age_cmp_30_49,        source: age_cmp_30_49,        label: 商圏年齢 30-49歳,           group: people, kind: share,    enabled: true}
+  - {key: age_cmp_50_69,        source: age_cmp_50_69,        label: 商圏年齢 50-69歳,           group: people, kind: share,    enabled: true}
+  - {key: age_cmp_70plus,       source: age_cmp_70plus,       label: 商圏年齢 70歳以上,          group: people, kind: share,    enabled: true}
+  - {key: hh_share_single,      source: hh_share_single,      label: 単身世帯比率,               group: people, kind: share,    enabled: true}
+  - {key: hh_share_with_child,  source: hh_share_with_child,  label: 6歳未満同居世帯比率,        group: people, kind: share,    enabled: true}
+  - {key: hh_share_senior,      source: hh_share_senior,      label: 65歳以上同居世帯比率,       group: people, kind: share,    enabled: true}
+  - {key: housing_share_owned,  source: housing_share_owned,  label: 持ち家比率,                 group: people, kind: share,    enabled: true}
+  - {key: housing_share_rent,   source: housing_share_rent,   label: 民営借家比率,               group: people, kind: share,    enabled: true}
+  - {key: housing_share_apart,  source: housing_share_apart,  label: 共同住宅比率,               group: people, kind: share,    enabled: true}
+  - {key: hh_income_avg,        source: hh_income_avg,        label: 1世帯あたり年収(万円),      group: people, kind: money,    enabled: true}
+  - {key: income_share_u300,    source: income_share_u300,    label: 年収300万円未満世帯比率,    group: people, kind: share,    enabled: true}
+  - {key: income_share_700p,    source: income_share_700p,    label: 年収700万円以上世帯比率,    group: people, kind: share,    enabled: true}
+  - {key: daytime_pop,          source: daytime_pop,          label: 昼間人口,                   group: people, kind: scale,    enabled: true}
+  - {key: nighttime_pop,        source: nighttime_pop,        label: 夜間人口,                   group: people, kind: scale,    enabled: true}
+  - {key: day_night_ratio,      source: day_night_ratio,      label: 昼夜間人口比,               group: people, kind: ratio,    enabled: true}
+  - {key: worker_pop,           source: worker_pop,           label: 第2次3次産業従業者数,       group: people, kind: scale,    enabled: true}
+  - {key: student_pop,          source: student_pop,          label: 生徒・学生数,               group: people, kind: scale,    enabled: true}
+
+  # ---------- B. アクセス・立地 ----------
+  - {key: share_walk,           source: share_walk,           label: 来店手段 徒歩比率,          group: access, kind: share,    enabled: true}
+  - {key: share_bike,           source: share_bike,           label: 来店手段 自転車比率,        group: access, kind: share,    enabled: true}
+  - {key: share_car,            source: share_car,            label: 来店手段 車比率,            group: access, kind: share,    enabled: true}
+  - {key: share_train,          source: share_train,          label: 来店手段 鉄道比率,          group: access, kind: share,    enabled: true}
+  - {key: parking_spaces,       source: parking_spaces,       label: 駐車場台数,                 group: access, kind: count,    enabled: true}
+  - {key: nearest_station_m,    source: nearest_station_m,    label: 最寄駅までの距離(m),        group: access, kind: distance, enabled: true}
+  - {key: station_daily_users,  source: station_daily_users,  label: 最寄駅1日乗降客数,          group: access, kind: scale,    enabled: true}
+  - {key: frontage_traffic,     source: frontage_traffic,     label: 前面道路12h交通量,          group: access, kind: scale,    enabled: true}
+
+  # ---------- C. 競合 ----------
+  - {key: comp_sm_1km,          source: comp_sm_1km,          label: 競合SM数(1km内),            group: competition, kind: count,    enabled: true}
+  - {key: comp_sm_3km,          source: comp_sm_3km,          label: 競合SM数(3km内),            group: competition, kind: count,    enabled: true}
+  - {key: comp_cvs_1km,         source: comp_cvs_1km,         label: 競合CVS数(1km内),           group: competition, kind: count,    enabled: true}
+  - {key: comp_drug_1km,        source: comp_drug_1km,        label: 競合ドラッグ数(1km内),      group: competition, kind: count,    enabled: true}
+  - {key: comp_discount_1km,    source: comp_discount_1km,    label: 競合ディスカウント数(1km内),group: competition, kind: count,    enabled: true}
+  - {key: nearest_comp_m,       source: nearest_comp_m,       label: 最寄競合までの距離(m),      group: competition, kind: distance, enabled: true}
+  - {key: nearest_comp_price,   source: nearest_comp_price,   label: 最寄競合の価格帯(1低-5高),  group: competition, kind: score,    enabled: true}
+  - {key: own_store_overlap,    source: own_store_overlap,    label: 自社他店との商圏重なり率,   group: competition, kind: share,    enabled: true}
+
+  # ---------- D. 周辺施設 ----------
+  - {key: fac_school,           source: fac_school,           label: 小中学校数,                 group: facility, kind: count, enabled: true}
+  - {key: fac_nursery,          source: fac_nursery,          label: 保育園・幼稚園数,           group: facility, kind: count, enabled: true}
+  - {key: fac_university,       source: fac_university,       label: 大学・専門学校数,           group: facility, kind: count, enabled: true}
+  - {key: fac_hospital,         source: fac_hospital,         label: 病院数,                     group: facility, kind: count, enabled: true}
+  - {key: fac_clinic,           source: fac_clinic,           label: 診療所数,                   group: facility, kind: count, enabled: true}
+  - {key: fac_factory,          source: fac_factory,          label: 工場数,                     group: facility, kind: count, enabled: true}
+  - {key: fac_office_workers,   source: fac_office_workers,   label: オフィス就業者数,           group: facility, kind: scale, enabled: true}
+  - {key: fac_apartment_units,  source: fac_apartment_units,  label: 集合住宅戸数,               group: facility, kind: scale, enabled: true}
+
+  # ---------- E. 自店の魅力 ----------
+  - {key: sales_floor_sqm,      source: sales_floor_sqm,      label: 売場面積(m2),               group: ownstore, kind: scale, enabled: true}
+  - {key: fresh_strength,       source: fresh_strength,       label: 生鮮の強さ(1-5),            group: ownstore, kind: score, enabled: true}
+  - {key: deli_strength,        source: deli_strength,        label: 惣菜の強さ(1-5),            group: ownstore, kind: score, enabled: true}
+  - {key: price_level,          source: price_level,          label: 価格政策(1低価格-5高品質),  group: ownstore, kind: score, enabled: true}
+  - {key: pb_ratio,             source: pb_ratio,             label: PB売上構成比,               group: ownstore, kind: share, enabled: true}
+  - {key: store_format,         source: store_format,         label: 業態,                       group: ownstore, kind: text,  enabled: true}
+
+# ============================================================
+# 類似度の3軸。weight はCLI/設定で上書き可能。
+# 軸に入らない変数は「参考」として範囲チェックと方向性分析だけに使う。
+# ============================================================
+axes:
+  daynight:
+    label: "軸1 昼夜人口比（住宅地型 ⇔ オフィス・繁華街型）"
+    weight: 1.0
+    variables: [day_night_ratio, worker_pop_per_pop, student_pop_per_pop, biz_density]
+  household:
+    label: "軸2 世帯構成（単身 ⇔ 子育て ⇔ 高齢）"
+    weight: 1.0
+    variables: [hh_share_single, hh_share_with_child, hh_share_senior, hh_avg_size, age_share_65plus]
+  mobility:
+    label: "軸3 移動手段（徒歩・自転車 ⇔ 駅利用 ⇔ 車）"
+    weight: 1.0
+    variables: [share_walk_bike, share_train, share_car, parking_per_1000sqm, nearest_station_m]
+
+# 軸に使う派生変数（元の変数から自動計算する）
+derived:
+  - {key: worker_pop_per_pop,    label: 従業者数/夜間人口,      formula: "worker_pop / nighttime_pop"}
+  - {key: student_pop_per_pop,   label: 生徒学生数/夜間人口,    formula: "student_pop / nighttime_pop"}
+  - {key: biz_density,           label: 事業所密度(件/千人),    formula: "comp_cvs_1km / (pop_total / 1000.0)"}
+  - {key: share_walk_bike,       label: 徒歩・自転車比率,       formula: "share_walk + share_bike"}
+  - {key: parking_per_1000sqm,   label: 駐車台数/売場1000m2,    formula: "parking_spaces / (sales_floor_sqm / 1000.0)"}
+  - {key: comp_sm_density,       label: 競合SM密度(件/km2),     formula: "comp_sm_3km / 28.27"}
+
+# ============================================================
+# 都市部／郊外の自動判定
+#   各ルールを rural_at→0, urban_at→1 に線形写像して加重平均
+# ============================================================
+urban_rural:
+  thresholds: {urban_min: 0.60, rural_max: 0.40}
+  rules:
+    - {variable: pop_density,       rural_at: 1500,  urban_at: 12000, weight: 1.5}
+    - {variable: share_car,         rural_at: 0.75,  urban_at: 0.05,  weight: 1.5}
+    - {variable: share_walk_bike,   rural_at: 0.20,  urban_at: 0.85,  weight: 1.0}
+    - {variable: parking_spaces,    rural_at: 250,   urban_at: 10,    weight: 1.0}
+    - {variable: nearest_station_m, rural_at: 3000,  urban_at: 200,   weight: 1.0}
+    - {variable: hh_share_single,   rural_at: 0.22,  urban_at: 0.55,  weight: 1.0}
+    - {variable: housing_share_apart, rural_at: 0.25, urban_at: 0.85, weight: 0.5}
+
+# ============================================================
+# 会員構成比と商圏年齢構成の突き合わせ
+#   会員は10歳刻み、商圏統計は5歳刻み。両方を割り切れる区切りで揃える。
+#   member 側の区分を変えたら、ここと age_cmp_* の定義の両方を直すこと。
+# ============================================================
+member_compare_buckets:
+  "15-29歳":  {member: ["10代", "20代"],   area: [age_cmp_15_29]}
+  "30-49歳":  {member: ["30代", "40代"],   area: [age_cmp_30_49]}
+  "50-69歳":  {member: ["50代", "60代"],   area: [age_cmp_50_69]}
+  "70歳以上": {member: ["70代以上"],        area: [age_cmp_70plus]}
+# 注: 会員の「10代」には15歳未満が含まれないため、15-29歳の比較はやや会員側が低く出ます。
+
+# ============================================================
+# レポート設定
+# ============================================================
+report:
+  top_n_similar: 2
+  # 方向性分析で「根拠あり」と見なす最小の一致ペア数（5店舗なら全10ペア）
+  min_concordant_pairs: 7
+  # 郊外店が1店しかないため、新店が郊外寄りのときに出す警告
+  rural_store_count_warning: true

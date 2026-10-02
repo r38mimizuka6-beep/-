@@ -1,0 +1,139 @@
+# ============================================================
+# 市販の商圏レポートExcel（1店舗=1ブック）から変数を抜き出すマップ
+#
+# 検証に使ったブック: 「サンプル店舗A様 1次(自転車10分)」形式
+# 行列がずれているバージョンに当たったら、ここのセル番地だけ直せば動きます。
+# anchor を書いた項目は、セル番地ではなく A列のラベル文字列を探して
+# 指定列の値を取るので、行がずれても追従します。
+# ============================================================
+
+meta:
+  format_name: "商圏レポート（JICFS消費推計つき）"
+  # 店名・商圏定義の取得元
+  store_name:   {sheet: "共通データ", cell: "B60"}
+  area_def:     {sheet: "共通データ", cell: "B61"}
+
+# --- セル直接指定 ---
+cells:
+  pop_total:        {sheet: "共通データ", cell: "B2"}
+  male_pop:         {sheet: "共通データ", cell: "C2"}
+  female_pop:       {sheet: "共通データ", cell: "D2"}
+  hh_total:         {sheet: "共通データ", cell: "E2"}
+
+  hh_share_single:  {sheet: "世帯特性20W", cell: "F21"}
+  hh_single_count:  {sheet: "世帯特性20W", cell: "F18"}
+  housing_share_owned: {sheet: "世帯特性20W", cell: "F44"}
+  housing_share_rent:  {sheet: "世帯特性20W", cell: "N44"}
+  housing_share_apart: {sheet: "世帯特性20W", cell: "AN44"}
+
+  hh_income_avg:    {sheet: "年収特性23W", cell: "K5"}
+  hh_income_base:   {sheet: "年収特性23W", cell: "K8"}
+  inc_1500p:        {sheet: "年収特性23W", cell: "K17"}
+  inc_1000_1500:    {sheet: "年収特性23W", cell: "K19"}
+  inc_700_1000:     {sheet: "年収特性23W", cell: "K21"}
+  inc_500_700:      {sheet: "年収特性23W", cell: "K23"}
+  inc_400_500:      {sheet: "年収特性23W", cell: "K25"}
+  inc_300_400:      {sheet: "年収特性23W", cell: "K27"}
+  inc_200_300:      {sheet: "年収特性23W", cell: "K29"}
+  inc_u200:         {sheet: "年収特性23W", cell: "K31"}
+
+# --- A列のラベルを探して値を取る（行ズレに強い） ---
+anchors:
+  daytime_pop:   {sheet: "昼夜間人口・事業所特性15W", label: "昼間人口",            col: "B"}
+  worker_pop:    {sheet: "昼夜間人口・事業所特性15W", label: "第2次・3次産業従業者", col: "B"}
+  student_pop:   {sheet: "昼夜間人口・事業所特性15W", label: "生徒・学生",           col: "B"}
+  nighttime_pop: {sheet: "昼夜間人口・事業所特性15W", label: "夜間人口",            col: "B"}
+  biz_total:     {sheet: "昼夜間人口・事業所特性15W", label: "全産業事業所数",       col: "B"}
+  biz_retail:    {sheet: "昼夜間人口・事業所特性15W", label: "小売事業所数",         col: "B"}
+  biz_food:      {sheet: "昼夜間人口・事業所特性15W", label: "飲食料品店事業所数",   col: "B"}
+  biz_resto:     {sheet: "昼夜間人口・事業所特性15W", label: "飲食店事業所数",       col: "B"}
+  fac_hospital:  {sheet: "昼夜間人口・事業所特性15W", label: "病院",                col: "B"}
+  fac_clinic:    {sheet: "昼夜間人口・事業所特性15W", label: "一般診療所",           col: "B"}
+
+# --- ヘッダ行の見出しで列を探す（列が増減しても追従） ---
+header_lookups:
+  hh_ordinary:
+    {sheet: "人口20Wデータ", header: "一般世帯数20M4W", header_row: 1, data_row: 2}
+  hh_senior_count:
+    {sheet: "人口20Wデータ", header: "一般世帯数（65歳以上世帯員のいる世帯）20M4W", header_row: 1, data_row: 2}
+  hh_child_count:
+    {sheet: "人口15_20Wグラフ用データ", header: "一般世帯数（6歳未満世帯員のいる世帯）20M4W", header_row: 1, data_row: 2}
+
+# --- 年齢5歳階級の表（商圏内の実数列）。先頭行から順にラベルを読む ---
+age_table:
+  sheet: "共通データ"
+  first_row: 29
+  last_row: 46
+  label_col: "A"
+  value_col: "C"      # 商圏内 総数（実数）
+  share_col: "D"      # 商圏内 構成比
+  # 5歳階級 -> ツールの年齢5区分
+  buckets:
+    age_share_0_14:   ["0-4歳", "5-9歳", "10-14歳"]
+    age_share_15_29:  ["15-19歳", "20-24歳", "25-29歳"]
+    age_share_30_44:  ["30-34歳", "35-39歳", "40-44歳"]
+    age_share_45_64:  ["45-49歳", "50-54歳", "55-59歳", "60-64歳"]
+    age_share_65plus: ["65-69歳", "70-74歳", "75-79歳", "80-84歳", "85歳以上"]
+    # 会員の10歳刻みと突き合わせる用
+    age_cmp_15_29:    ["15-19歳", "20-24歳", "25-29歳"]
+    age_cmp_30_49:    ["30-34歳", "35-39歳", "40-44歳", "45-49歳"]
+    age_cmp_50_69:    ["50-54歳", "55-59歳", "60-64歳", "65-69歳"]
+    age_cmp_70plus:   ["70-74歳", "75-79歳", "80-84歳", "85歳以上"]
+
+# --- 計算で作る項目 ---
+computed:
+  day_night_ratio: "daytime_pop / nighttime_pop"
+  hh_avg_size:     "pop_total / hh_total"
+  income_share_u300: "(inc_u200 + inc_200_300) / hh_income_base"
+  income_share_700p: "(inc_700_1000 + inc_1000_1500 + inc_1500p) / hh_income_base"
+  hh_share_senior:     "hh_senior_count / hh_ordinary"
+  hh_share_with_child: "hh_child_count / hh_ordinary"
+
+# --- 商圏カテゴリ需要（JICFS中分類別の1人当たり金額・指数） ---
+# 類似度の説明変数には使わず、「商圏から見たカテゴリ需要の強弱」として
+# 棚割提案の裏付けに使う。
+category_demand:
+  sheet: "商圏データ"
+  header_row: 1
+  columns:
+    jicfs_major_code: "ＪＩＣＦＳ大"
+    jicfs_major_name: "ＪＩＣＦＳ大名"
+    jicfs_mid_code:   "ＪＩＣＦＳ中"
+    jicfs_mid_name:   "ＪＩＣＦＳ中名"
+    per_capita_amount: "１人当たり金額"
+    area_amount:       "商圏の金額"
+    area_index:        "商圏の指数"
+    region_index:      "エリア\n指数"
+    combined_index:    "商圏内×エリア指数"
+
+# このブックから取れない項目（店舗側で埋める必要がある）
+not_available_in_workbook:
+  - pop_density
+  - share_walk
+  - share_bike
+  - share_car
+  - share_train
+  - parking_spaces
+  - nearest_station_m
+  - station_daily_users
+  - frontage_traffic
+  - comp_sm_1km
+  - comp_sm_3km
+  - comp_cvs_1km
+  - comp_drug_1km
+  - comp_discount_1km
+  - nearest_comp_m
+  - nearest_comp_price
+  - own_store_overlap
+  - fac_school
+  - fac_nursery
+  - fac_university
+  - fac_factory
+  - fac_office_workers
+  - fac_apartment_units
+  - sales_floor_sqm
+  - fresh_strength
+  - deli_strength
+  - price_level
+  - pb_ratio
+  - store_format
