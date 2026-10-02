@@ -1,0 +1,1328 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>POS104週 PIダッシュボード</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@500;700&family=Noto+Sans+JP:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* layout: one app shell — sticky header, a single filter rail scoping every view, a KPI row, then tabbed chart stack */
+:root{
+  color-scheme: light;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+
+  --plane:#f9f9f7; --surface:#fcfcfb; --surface-2:#f3f2ee; --surface-3:#ebeae5;
+  --ink:#0b0b0b; --ink-2:#52514e; --ink-3:#898781;
+  --grid:#e1e0d9; --axis:#c3c2b7; --ring:rgba(11,11,11,.10);
+  --accent:#2a78d6; --on-accent:#ffffff; --accent-soft:#e8f1fd;
+  --pos:#2a78d6; --neg:#e34948;
+  --good:#006300; --warn:#fab219; --crit:#d03b3b;
+
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100;
+  --s5:#e87ba4; --s6:#008300; --s7:#4a3aa7; --s8:#e34948;
+
+  --h-mid:#f0efec;
+  --h-p1:#b7d3f6; --h-p2:#5598e7; --h-p3:#2a78d6; --h-p4:#104281;
+  --h-n1:#f8cfcf; --h-n2:#e97e7e; --h-n3:#dc5151; --h-n4:#8f2222;
+
+  --font-display:"Zen Kaku Gothic New","Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;
+  --font-body:"Noto Sans JP","Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;
+  --font-num:"IBM Plex Sans","Noto Sans JP",system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme: dark;
+    --plane:#0d0d0d; --surface:#1a1a19; --surface-2:#232321; --surface-3:#2c2c2a;
+    --ink:#ffffff; --ink-2:#c3c2b7; --ink-3:#898781;
+    --grid:#2c2c2a; --axis:#383835; --ring:rgba(255,255,255,.10);
+    --accent:#3987e5; --on-accent:#0d0d0d; --accent-soft:#17283c;
+    --pos:#3987e5; --neg:#e66767;
+    --good:#0ca30c; --warn:#fab219; --crit:#d03b3b;
+    --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
+    --s5:#d55181; --s6:#008300; --s7:#9085e9; --s8:#e66767;
+    --h-mid:#383835;
+    --h-p1:#1a3a5e; --h-p2:#215a99; --h-p3:#3987e5; --h-p4:#86b6ef;
+    --h-n1:#4d2020; --h-n2:#8f2a2a; --h-n3:#dc5151; --h-n4:#f2a9a9;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --plane:#0d0d0d; --surface:#1a1a19; --surface-2:#232321; --surface-3:#2c2c2a;
+  --ink:#ffffff; --ink-2:#c3c2b7; --ink-3:#898781;
+  --grid:#2c2c2a; --axis:#383835; --ring:rgba(255,255,255,.10);
+  --accent:#3987e5; --on-accent:#0d0d0d; --accent-soft:#17283c;
+  --pos:#3987e5; --neg:#e66767;
+  --good:#0ca30c; --warn:#fab219; --crit:#d03b3b;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
+  --s5:#d55181; --s6:#008300; --s7:#9085e9; --s8:#e66767;
+  --h-mid:#383835;
+  --h-p1:#1a3a5e; --h-p2:#215a99; --h-p3:#3987e5; --h-p4:#86b6ef;
+  --h-n1:#4d2020; --h-n2:#8f2a2a; --h-n3:#dc5151; --h-n4:#f2a9a9;
+}
+
+*{box-sizing:border-box}
+img{max-width:100%}
+[hidden]{display:none !important}
+html,body{margin:0}
+body{
+  background:var(--plane); color:var(--ink);
+  font:400 14px/1.6 var(--font-body);
+  -webkit-text-size-adjust:100%;
+}
+@media (prefers-reduced-motion: reduce){ *{transition:none !important; animation:none !important} }
+
+.wrap{max-width:1240px; margin:0 auto; padding-inline:16px; padding-block:0 48px}
+
+/* ---------- header ---------- */
+.hd{position:sticky; top:env(safe-area-inset-top, 0px); z-index:40; background:var(--plane); border-bottom:1px solid var(--grid)}
+.hd-in{max-width:1240px; margin:0 auto; padding-inline:16px; padding-block:14px 12px;
+  display:flex; gap:16px; align-items:flex-end; flex-wrap:wrap}
+.brand{display:flex; flex-direction:column; gap:2px; min-width:0}
+.eyebrow{font:500 11px/1 var(--font-body); letter-spacing:.14em; color:var(--ink-3)}
+h1{margin:0; font:700 clamp(19px,2.4vw,25px)/1.2 var(--font-display); letter-spacing:-.01em; text-wrap:balance}
+.sub{color:var(--ink-2); font-size:12.5px}
+.hd-right{margin-left:auto; display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+
+.chip{display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px;
+  border:1px solid var(--ring); background:var(--surface); color:var(--ink-2);
+  font:500 11.5px/1.4 var(--font-body); white-space:nowrap}
+.chip b{color:var(--ink); font-weight:600; font-family:var(--font-num)}
+.chip.live{border-color:color-mix(in srgb, var(--accent) 45%, transparent); background:var(--accent-soft); color:var(--ink)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--accent);flex:none}
+.dot.sample{background:var(--warn)}
+
+button,select,input{font-family:inherit; font-size:inherit; color:inherit}
+.btn{appearance:none; border:1px solid var(--ring); background:var(--surface); color:var(--ink);
+  padding:7px 13px; border-radius:8px; font:500 12.5px/1.3 var(--font-body); cursor:pointer}
+.btn:hover{background:var(--surface-2)}
+.btn.primary{background:var(--accent); border-color:transparent; color:var(--on-accent); font-weight:600}
+.btn.primary:hover{filter:brightness(1.07)}
+.btn.sm{padding:5px 10px; font-size:11.5px}
+:where(button,select,input,[tabindex]):focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+
+/* ---------- loader ---------- */
+.loader{margin-top:16px; border:1.5px dashed var(--axis); border-radius:12px; background:var(--surface);
+  padding:18px; display:flex; gap:14px; align-items:center; flex-wrap:wrap}
+.loader.hot{border-color:var(--accent); background:var(--accent-soft)}
+.loader h2{margin:0 0 3px; font:700 14.5px/1.3 var(--font-display)}
+.loader p{margin:0; color:var(--ink-2); font-size:12.5px}
+.loader .grow{flex:1 1 280px; min-width:0}
+.err{margin-top:10px; padding:10px 12px; border-radius:8px; border:1px solid var(--crit);
+  background:color-mix(in srgb, var(--crit) 10%, var(--surface)); color:var(--ink); font-size:12.5px}
+.err.ok{border-color:var(--accent); background:var(--accent-soft)}
+
+/* ---------- filter rail ---------- */
+.rail{margin-top:16px; background:var(--surface); border:1px solid var(--ring); border-radius:12px;
+  padding:12px 14px; display:flex; gap:10px 18px; align-items:flex-end; flex-wrap:wrap}
+.fld{display:flex; flex-direction:column; gap:5px; min-width:0}
+.fld > label{font:500 10.5px/1 var(--font-body); letter-spacing:.1em; color:var(--ink-3)}
+select{appearance:none; border:1px solid var(--ring); background:var(--surface-2); border-radius:8px;
+  padding:7px 26px 7px 10px; font-size:12.5px; cursor:pointer; max-width:220px;
+  background-image:linear-gradient(45deg,transparent 50%,var(--ink-3) 50%),linear-gradient(135deg,var(--ink-3) 50%,transparent 50%);
+  background-position:calc(100% - 14px) 52%, calc(100% - 9px) 52%; background-size:5px 5px,5px 5px; background-repeat:no-repeat}
+.seg{display:inline-flex; background:var(--surface-2); border:1px solid var(--ring); border-radius:8px; padding:2px; gap:2px}
+.seg button{appearance:none; border:0; background:transparent; color:var(--ink-2); cursor:pointer;
+  padding:5px 11px; border-radius:6px; font:500 12.5px/1.3 var(--font-body)}
+.seg button[aria-pressed="true"]{background:var(--surface); color:var(--ink); font-weight:600; box-shadow:0 1px 2px rgba(0,0,0,.06)}
+.tgl{display:inline-flex; align-items:center; gap:7px; font-size:12.5px; color:var(--ink-2); cursor:pointer; user-select:none}
+.tgl input{accent-color:var(--accent); width:15px; height:15px; margin:0}
+.railnote{flex:1 1 100%; margin:0; color:var(--ink-3); font-size:11.5px; border-top:1px solid var(--grid); padding-top:9px}
+.railnote b{color:var(--ink-2); font-weight:600}
+
+/* ---------- KPI row ---------- */
+.kpis{margin-top:16px; display:grid; gap:10px; grid-template-columns:repeat(auto-fit,minmax(152px,1fr))}
+.kpi{background:var(--surface); border:1px solid var(--ring); border-radius:12px; padding:13px 14px 12px;
+  display:flex; flex-direction:column; gap:3px}
+.kpi .k{font:500 10.5px/1.2 var(--font-body); letter-spacing:.1em; color:var(--ink-3)}
+.kpi .v{font:600 clamp(22px,3vw,29px)/1.1 var(--font-num); letter-spacing:-.015em}
+.kpi .u{font-size:12px; font-weight:500; color:var(--ink-2); margin-left:2px}
+.kpi .n{font-size:11.5px; color:var(--ink-3)}
+.kpi .n.up{color:var(--good); font-weight:600}
+.kpi .n.dn{color:var(--crit); font-weight:600}
+
+/* ---------- tabs ---------- */
+.tabs{margin-top:22px; display:flex; gap:4px; border-bottom:1px solid var(--grid); overflow-x:auto}
+.tabs button{appearance:none; border:0; background:transparent; cursor:pointer; white-space:nowrap;
+  padding:9px 13px; margin-bottom:-1px; border-bottom:2px solid transparent;
+  font:500 13.5px/1.4 var(--font-body); color:var(--ink-3)}
+.tabs button[aria-selected="true"]{color:var(--ink); border-bottom-color:var(--accent); font-weight:600}
+.tabs button:hover{color:var(--ink-2)}
+
+/* ---------- cards ---------- */
+.card{margin-top:16px; background:var(--surface); border:1px solid var(--ring); border-radius:12px; padding:16px}
+.card-hd{display:flex; gap:12px; align-items:baseline; flex-wrap:wrap; margin-bottom:4px}
+.card-hd h3{margin:0; font:700 15px/1.3 var(--font-display)}
+.card-hd .right{margin-left:auto; display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+.card p.lede{margin:0 0 12px; color:var(--ink-2); font-size:12.5px; max-width:68ch}
+.legend{display:flex; gap:7px 14px; flex-wrap:wrap; margin:10px 0 0; padding:0; list-style:none}
+.legend li{display:flex; align-items:center; gap:6px; font-size:12px; color:var(--ink-2)}
+.sw{width:11px; height:11px; border-radius:3px; flex:none}
+.sw.ln{width:14px; height:3px; border-radius:2px}
+
+.plot{position:relative; width:100%}
+.plot svg{display:block; width:100%; height:auto; overflow:visible}
+.gl{stroke:var(--grid); stroke-width:1; shape-rendering:crispEdges}
+.axl{stroke:var(--axis); stroke-width:1; shape-rendering:crispEdges}
+.ref{stroke:var(--ink-3); stroke-width:1; shape-rendering:crispEdges}
+.tk{fill:var(--ink-3); font:400 10.5px/1 var(--font-num); font-variant-numeric:tabular-nums}
+.tk.mid{fill:var(--ink-2)}
+.dl{font:600 11px/1 var(--font-num); font-variant-numeric:tabular-nums}
+.vl{fill:var(--ink-2); font:500 11px/1 var(--font-num); font-variant-numeric:tabular-nums}
+.cl{fill:var(--ink); font:400 11.5px/1 var(--font-body)}
+.hair{stroke:var(--axis); stroke-width:1; shape-rendering:crispEdges}
+
+/* ---------- category picker ---------- */
+.pick{border:1px solid var(--ring); border-radius:10px; background:var(--surface-2); overflow:hidden}
+.pick-hd{display:flex; gap:8px; align-items:center; padding:8px; border-bottom:1px solid var(--grid); flex-wrap:wrap}
+.pick-hd input[type=search]{flex:1 1 150px; min-width:0; border:1px solid var(--ring); border-radius:7px;
+  background:var(--surface); padding:6px 9px; font-size:12.5px}
+.pick-list{max-height:190px; overflow-y:auto; padding:4px}
+.pick-list label{display:flex; gap:8px; align-items:center; padding:5px 7px; border-radius:6px; cursor:pointer; font-size:12.5px}
+.pick-list label:hover{background:var(--surface)}
+.pick-list input{accent-color:var(--accent); flex:none; margin:0}
+.pick-list .meta{margin-left:auto; color:var(--ink-3); font:400 11px/1 var(--font-num); font-variant-numeric:tabular-nums; flex:none}
+.pick-list .nm{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.mark{font-size:10px; font-weight:600; padding:1px 4px; border-radius:4px; flex:none}
+.mark.star{background:color-mix(in srgb, var(--warn) 22%, var(--surface)); color:var(--ink)}
+.mark.holi{background:var(--accent-soft); color:var(--ink)}
+
+/* ---------- heatmap ---------- */
+.scroll{overflow-x:auto; overscroll-behavior-x:contain}
+table.hm{border-collapse:separate; border-spacing:2px; font-family:var(--font-num)}
+table.hm th{font:500 11px/1.2 var(--font-body); color:var(--ink-2); font-weight:500; text-align:left; padding:0 4px; white-space:nowrap}
+table.hm thead th{font-size:10px; color:var(--ink-3); text-align:center; font-variant-numeric:tabular-nums}
+table.hm tbody th{position:sticky; left:0; background:var(--surface); z-index:2; padding-right:8px;
+  box-shadow:1px 0 0 var(--grid); max-width:148px; overflow:hidden; text-overflow:ellipsis}
+table.hm td{width:13px; min-width:13px; height:19px; border-radius:2px; background:var(--surface-3); padding:0; cursor:default}
+table.hm.wide td{width:auto; min-width:68px; text-align:center; font:600 12px/19px var(--font-num); font-variant-numeric:tabular-nums; height:28px}
+table.hm td.na{background:repeating-linear-gradient(45deg,var(--surface-2) 0 3px,var(--surface-3) 3px 6px)}
+.hmlegend{display:flex; align-items:center; gap:3px; margin-top:12px; flex-wrap:wrap}
+.hmlegend .lb{font-size:11px; color:var(--ink-3); font-family:var(--font-num)}
+.hmlegend .cell{width:26px; height:11px; border-radius:2px}
+
+/* ---------- data table ---------- */
+table.dt{width:100%; border-collapse:collapse; font-family:var(--font-num); font-size:12.5px}
+table.dt th,table.dt td{padding:7px 9px; text-align:left; border-bottom:1px solid var(--grid); white-space:nowrap}
+table.dt thead th{position:sticky; top:0; background:var(--surface); z-index:1; font:600 11.5px/1.3 var(--font-body);
+  color:var(--ink-2); cursor:pointer; user-select:none}
+table.dt thead th .ar{color:var(--accent); font-size:9px}
+table.dt td.num{text-align:right; font-variant-numeric:tabular-nums}
+table.dt tbody tr:hover{background:var(--surface-2)}
+table.dt td.cat{font-family:var(--font-body); max-width:220px; overflow:hidden; text-overflow:ellipsis}
+.dtwrap{max-height:520px; overflow:auto; border:1px solid var(--ring); border-radius:10px; margin-top:12px}
+.up{color:var(--good); font-weight:600}
+.dn{color:var(--crit); font-weight:600}
+
+/* ---------- tooltip ---------- */
+#tip{position:fixed; z-index:90; pointer-events:none; opacity:0; transition:opacity .09s;
+  background:var(--surface); border:1px solid var(--ring); border-radius:9px; padding:9px 11px;
+  box-shadow:0 6px 22px rgba(0,0,0,.14); font-size:12px; max-width:270px}
+#tip .tt-h{font:600 12px/1.3 var(--font-body); margin-bottom:5px; color:var(--ink)}
+#tip table{border-collapse:collapse; font-family:var(--font-num)}
+#tip td{padding:1.5px 0; font-size:11.5px}
+#tip td.c{padding-right:7px}
+#tip td.v{text-align:right; padding-left:10px; font-variant-numeric:tabular-nums; font-weight:600}
+#tip .sw{display:inline-block; vertical-align:middle; margin-right:5px}
+
+.empty{padding:34px 16px; text-align:center; color:var(--ink-3); font-size:13px}
+.foot{margin-top:28px; padding-top:14px; border-top:1px solid var(--grid); color:var(--ink-3); font-size:11.5px; line-height:1.8}
+.foot b{color:var(--ink-2); font-weight:600}
+@media (max-width:760px){ .hd-right .chip.dup{display:none} }
+@media (max-width:560px){
+  table.hm td{width:9px; min-width:9px}
+  .rail{gap:10px 12px}
+}
+</style>
+</head>
+<body>
+
+<header class="hd">
+  <div class="hd-in">
+    <div class="brand">
+      <span class="eyebrow">104週 データトピックス ／ ＰＯＳデータ</span>
+      <h1>POS104週 PIダッシュボード</h1>
+      <span class="sub" id="subLine">首都圏・平日／休日別 カテゴリーPI値と前年同週比指数</span>
+    </div>
+    <div class="hd-right">
+      <span class="chip" id="sourceChip"><span class="dot sample"></span><span id="sourceText">サンプル数値</span></span>
+      <span class="chip dup">対象週 <b id="weekSpan">—</b></span>
+      <span class="chip dup">カテゴリー <b id="catCount">—</b></span>
+      <button class="btn primary" id="pickBtn" type="button">Excelを読み込む</button>
+      <input type="file" id="fileInput" accept=".xlsx,.xlsm" hidden>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <section class="loader" id="loader">
+    <div class="grow">
+      <h2 id="loaderTitle">サンプル数値で表示中です</h2>
+      <p id="loaderText">PI値・指数を入力した <b>104週POSデータ</b> の xlsx をこの枠にドロップすると、実数値に切り替わります。ファイルはブラウザ内だけで処理され、どこにも送信されません。</p>
+    </div>
+    <button class="btn" id="pickBtn2" type="button">ファイルを選ぶ</button>
+    <button class="btn sm" id="demoBtn" type="button" hidden>サンプルに戻す</button>
+  </section>
+  <div class="err" id="err" hidden></div>
+
+  <section class="rail" aria-label="絞り込み">
+    <div class="fld">
+      <label>曜日区分</label>
+      <div class="seg" id="fDay" role="group" aria-label="曜日区分">
+        <button type="button" data-v="平日" aria-pressed="true">平日</button>
+        <button type="button" data-v="休日" aria-pressed="false">休日</button>
+      </div>
+    </div>
+    <div class="fld">
+      <label for="fSeg">区分</label>
+      <select id="fSeg"><option>全体</option><option>コア</option><option>注目</option></select>
+    </div>
+    <div class="fld">
+      <label for="fMajor">大分類</label>
+      <select id="fMajor"><option>全体</option></select>
+    </div>
+    <div class="fld">
+      <label for="fFrom">開始週</label>
+      <select id="fFrom"></select>
+    </div>
+    <div class="fld">
+      <label for="fTo">終了週</label>
+      <select id="fTo"></select>
+    </div>
+    <div class="fld">
+      <label>印で絞る</label>
+      <div style="display:flex; gap:14px; padding:6px 0 2px">
+        <label class="tgl"><input type="checkbox" id="fStar">★ 注目のみ</label>
+        <label class="tgl"><input type="checkbox" id="fHoli">休 休日伸長のみ</label>
+      </div>
+    </div>
+    <p class="railnote">
+      <b>PI値</b>＝レジ客数千人当りの購入金額　／　<b>指数</b>＝前年同週比（前年同週＝100）　／　<b>★</b>＝注目・要チェックカテゴリー　／　<b>休</b>＝休日に伸びるカテゴリー。
+      絞り込みは4つのビュー全体に効きます。
+    </p>
+  </section>
+
+  <section class="kpis" id="kpis"></section>
+
+  <div class="tabs" id="tabs" role="tablist">
+    <button type="button" role="tab" data-v="trend" aria-selected="true">104週トレンド</button>
+    <button type="button" role="tab" data-v="rank" aria-selected="false">前年比ランキング</button>
+    <button type="button" role="tab" data-v="heat" aria-selected="false">大分類ヒートマップ</button>
+    <button type="button" role="tab" data-v="table" aria-selected="false">データ表</button>
+  </div>
+
+  <!-- trend -->
+  <section id="view-trend" role="tabpanel">
+    <div class="card">
+      <div class="card-hd">
+        <h3 id="trendTitle">カテゴリー別 週次推移</h3>
+        <div class="right">
+          <div class="seg" id="trendMeasure" role="group" aria-label="指標">
+            <button type="button" data-v="pi" aria-pressed="true">PI値</button>
+            <button type="button" data-v="idx" aria-pressed="false">指数</button>
+          </div>
+          <div class="seg" id="trendMode" role="group" aria-label="表示形式">
+            <button type="button" data-v="chart" aria-pressed="true">グラフ</button>
+            <button type="button" data-v="table" aria-pressed="false">表</button>
+          </div>
+        </div>
+      </div>
+      <p class="lede" id="trendLede">最大8カテゴリーまで重ねて比較できます。山谷の位置で季節性、線の高さでPI値の水準を読みます。</p>
+      <div class="plot" id="trendPlot"></div>
+      <ul class="legend" id="trendLegend"></ul>
+      <div id="trendTable" hidden></div>
+    </div>
+    <div class="card">
+      <div class="card-hd"><h3>比較するカテゴリー</h3>
+        <div class="right">
+          <span class="chip">選択 <b id="pickCount">0</b>/8</span>
+          <button class="btn sm" id="pickTop" type="button">PI上位5に戻す</button>
+          <button class="btn sm" id="pickClear" type="button">全解除</button>
+        </div>
+      </div>
+      <div class="pick">
+        <div class="pick-hd">
+          <input type="search" id="catSearch" placeholder="カテゴリー名で検索（例：鍋物つゆ）" aria-label="カテゴリー検索">
+          <select id="catSort" aria-label="並び順"><option value="pi">PI値の高い順</option><option value="idx">指数の高い順</option><option value="idxlow">指数の低い順</option><option value="name">名前順</option></select>
+        </div>
+        <div class="pick-list" id="catList"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- rank -->
+  <section id="view-rank" role="tabpanel" hidden>
+    <div class="card">
+      <div class="card-hd">
+        <h3>前年比ランキング</h3>
+        <div class="right">
+          <label class="eyebrow" for="rankWeek" style="letter-spacing:.1em">対象週</label>
+          <select id="rankWeek" aria-label="対象週"></select>
+          <select id="rankN" aria-label="表示件数"><option value="10">上下10件</option><option value="15" selected>上下15件</option><option value="25">上下25件</option></select>
+          <div class="seg" id="rankMode" role="group" aria-label="表示形式">
+            <button type="button" data-v="chart" aria-pressed="true">グラフ</button>
+            <button type="button" data-v="table" aria-pressed="false">表</button>
+          </div>
+        </div>
+      </div>
+      <p class="lede">前年同週＝100 を基準線に、伸長側と減退側へ振り分けています。バーの長さは前年差（ポイント）、数値は指数です。</p>
+      <div class="plot" id="rankPlot"></div>
+      <ul class="legend">
+        <li><span class="sw" style="background:var(--pos)"></span>指数100以上（伸長）</li>
+        <li><span class="sw" style="background:var(--neg)"></span>指数100未満（減退）</li>
+      </ul>
+      <div id="rankTable" hidden></div>
+    </div>
+  </section>
+
+  <!-- heatmap -->
+  <section id="view-heat" role="tabpanel" hidden>
+    <div class="card">
+      <div class="card-hd">
+        <h3>大分類別 前年比の推移</h3>
+        <div class="right">
+          <div class="seg" id="heatAxis" role="group" aria-label="列の軸">
+            <button type="button" data-v="week" aria-pressed="true">列＝週</button>
+            <button type="button" data-v="seg" aria-pressed="false">列＝区分</button>
+          </div>
+          <div class="seg" id="heatMode" role="group" aria-label="表示形式">
+            <button type="button" data-v="chart" aria-pressed="true">ヒートマップ</button>
+            <button type="button" data-v="table" aria-pressed="false">表</button>
+          </div>
+        </div>
+      </div>
+      <p class="lede">セルは大分類に含まれるカテゴリーの平均指数です。横に赤が続く棚は構造的な減退、縦に赤が走る週は全体要因と読み分けます。</p>
+      <div class="scroll" id="heatPlot"></div>
+      <div class="hmlegend" id="heatLegend"></div>
+      <div id="heatTable" hidden></div>
+    </div>
+  </section>
+
+  <!-- table -->
+  <section id="view-table" role="tabpanel" hidden>
+    <div class="card">
+      <div class="card-hd">
+        <h3>明細データ</h3>
+        <div class="right">
+          <select id="tblWeek" aria-label="対象週"></select>
+          <input type="search" id="tblSearch" placeholder="カテゴリー名で検索" aria-label="カテゴリー検索"
+            style="border:1px solid var(--ring); border-radius:7px; background:var(--surface-2); padding:6px 9px; font-size:12.5px; max-width:190px">
+          <button class="btn sm" id="copyCsv" type="button">CSVをコピー</button>
+        </div>
+      </div>
+      <p class="lede" id="tblLede">絞り込み条件に一致する行を表示します。</p>
+      <div class="dtwrap"><table class="dt" id="dt"><thead id="dtHead"></thead><tbody id="dtBody"></tbody></table></div>
+    </div>
+  </section>
+
+  <div class="foot">
+    <b>読み込み仕様</b>：平日ブロック（印／カテゴリー名／PI値／指数）と休日ブロック（印／カテゴリー名／休／PI値／指数）の9列を1週とみなし、C列から右へ9列刻みで週を検出します。大分類・区分は結合セルを縦に展開して各行へ割り当てます。週の見出しは「第41週(2025/12/01)」形式から週番号と日付を読み取ります。<br>
+    <b>プライバシー</b>：xlsx の解凍と解析はすべてこのページ内（ブラウザ）で行われ、数値が外部に送信されることはありません。
+  </div>
+</div>
+
+<div id="tip" aria-hidden="true"></div>
+
+<script>
+(function(){
+'use strict';
+
+/* ===================== 0. taxonomy (uploaded workbook structure) ===================== */
+const TAXO = {"region":"首都圏","weekLabel":"第41週(2025/12/01)～","majors":["調味料","インスタント","瓶・缶詰","麺類","乾物","嗜好食品","嗜好飲料","飲料水","乳製品","チルド飲料デザート","アイスクリーム","冷凍食品","パン・生菓子","和日配","日配調理加工品・米飯・デリカ","酒類","菓子","その他加工食品"],"sections":[{"major":"調味料","seg":"コア","cats":[{"n":"鍋物つゆ","wd":true,"we":true,"star":false},{"n":"即席味噌汁","wd":true,"we":true,"star":false},{"n":"万能つゆ","wd":true,"we":true,"star":false},{"n":"練りスパイス","wd":true,"we":true,"star":false},{"n":"砂糖","wd":true,"we":true,"star":false},{"n":"オリーブ油","wd":true,"we":true,"star":false},{"n":"濃口・淡口醤油","wd":true,"we":true,"star":false},{"n":"ドレッシング","wd":true,"we":true,"star":false},{"n":"マヨネーズ","wd":true,"we":true,"star":false},{"n":"和風調味料","wd":true,"we":true,"star":false},{"n":"生味噌","wd":true,"we":true,"star":true},{"n":"無添加味噌","wd":true,"we":true,"star":false},{"n":"プレミアム油","wd":true,"we":true,"star":false},{"n":"ごま油","wd":true,"we":true,"star":false},{"n":"ぽん酢","wd":true,"we":true,"star":false},{"n":"和風スパイス","wd":true,"we":true,"star":false},{"n":"機能性オイル","wd":true,"we":true,"star":false},{"n":"ブラウンソース","wd":true,"we":true,"star":false},{"n":"焼肉のたれ","wd":true,"we":true,"star":false},{"n":"ケチャップ","wd":true,"we":true,"star":false},{"n":"プレミアムドレッシング","wd":true,"we":true,"star":false},{"n":"加工酢","wd":true,"we":true,"star":false},{"n":"低カロリーマヨネーズ","wd":true,"we":true,"star":false},{"n":"すきやきの割下","wd":true,"we":true,"star":false},{"n":"専用ソース","wd":true,"we":true,"star":false},{"n":"サラダ・天ぷら油","wd":true,"we":true,"star":false},{"n":"洋風スパイス","wd":true,"we":true,"star":false},{"n":"調理酒","wd":false,"we":true,"star":false},{"n":"低塩・減塩醤油","wd":false,"we":true,"star":false}]},{"major":"調味料","seg":"注目","cats":[{"n":"その他つゆ","wd":true,"we":true,"star":false},{"n":"ホール・カットトマト","wd":false,"we":true,"star":false},{"n":"みりん風調味料","wd":true,"we":true,"star":false},{"n":"洋風ソース","wd":false,"we":true,"star":false},{"n":"無添加調味料","wd":false,"we":true,"star":false},{"n":"だし醤油","wd":false,"we":true,"star":false},{"n":"しゃぶしゃぶのたれ","wd":false,"we":true,"star":false},{"n":"その他醤油","wd":false,"we":true,"star":false},{"n":"その他ソース","wd":false,"we":true,"star":false}]},{"major":"インスタント","seg":"コア","cats":[{"n":"カレーレトルト・缶","wd":true,"we":true,"star":false},{"n":"中華料理の素","wd":true,"we":true,"star":false},{"n":"カレールー","wd":true,"we":true,"star":false},{"n":"中華調味料","wd":true,"we":true,"star":false},{"n":"シチュールー","wd":true,"we":true,"star":false},{"n":"その他料理の素","wd":true,"we":true,"star":false},{"n":"炊き込み用の具","wd":false,"we":true,"star":false},{"n":"カレーフレーク・パウダー","wd":false,"we":true,"star":false}]},{"major":"インスタント","seg":"注目","cats":[{"n":"その他コンビニエンスフード","wd":true,"we":true,"star":false},{"n":"シチューレトルト・缶","wd":true,"we":true,"star":false},{"n":"オーブン","wd":true,"we":true,"star":false},{"n":"中華乾物","wd":false,"we":true,"star":false},{"n":"カレー関連商品","wd":false,"we":true,"star":false}]},{"major":"瓶・缶詰","seg":"コア","cats":[{"n":"ツナ (ビン缶詰)","wd":true,"we":true,"star":false},{"n":"さば (ビン缶詰)","wd":true,"we":true,"star":false},{"n":"鮭・鱒 (ビン缶詰)","wd":true,"we":true,"star":false},{"n":"たけのこ (ビン缶詰)","wd":true,"we":true,"star":false},{"n":"その他農産・ビン缶詰","wd":true,"we":true,"star":false},{"n":"コーン (ビン缶詰)","wd":false,"we":true,"star":false}]},{"major":"瓶・缶詰","seg":"注目","cats":[{"n":"くり (ビン缶詰)","wd":true,"we":true,"star":false},{"n":"ゆで小豆 (ビン缶詰)","wd":true,"we":true,"star":false},{"n":"かに (ビン缶詰)","wd":false,"we":true,"star":false},{"n":"ほたて (ビン缶詰)","wd":true,"we":true,"star":false},{"n":"やきとり (ビン缶詰)","wd":true,"we":false,"star":false},{"n":"うずら (ビン缶詰)","wd":true,"we":true,"star":false},{"n":"マッシュルーム (ビン缶詰)","wd":false,"we":true,"star":false},{"n":"ぎんなん (ビン缶詰)","wd":false,"we":true,"star":false}]},{"major":"麺類","seg":"コア","cats":[{"n":"ラーメン　カップ","wd":true,"we":true,"star":false},{"n":"ラーメン　袋","wd":true,"we":true,"star":false},{"n":"スパゲティー","wd":true,"we":true,"star":false},{"n":"うどん　カップ","wd":true,"we":true,"star":false},{"n":"レトルトソース","wd":true,"we":true,"star":false},{"n":"焼きそば　カップ","wd":true,"we":true,"star":false},{"n":"そば　カップ","wd":true,"we":true,"star":false},{"n":"粉末・ペースト","wd":true,"we":true,"star":false},{"n":"そば (乾麺)","wd":true,"we":true,"star":false}]},{"major":"麺類","seg":"注目","cats":[{"n":"焼きそば　袋","wd":true,"we":true,"star":false},{"n":"うどん　袋","wd":true,"we":true,"star":false},{"n":"中華麺 (乾麺)","wd":true,"we":true,"star":false},{"n":"そば　袋","wd":true,"we":true,"star":false},{"n":"パスタ　袋","wd":true,"we":true,"star":false},{"n":"その他パスタ","wd":false,"we":true,"star":false},{"n":"その他乾麺","wd":false,"we":true,"star":false},{"n":"パスタ　カップ","wd":false,"we":true,"star":false}]},{"major":"乾物","seg":"コア","cats":[{"n":"米","wd":true,"we":true,"star":false},{"n":"包装もち","wd":true,"we":true,"star":false},{"n":"無菌パック米飯","wd":true,"we":true,"star":false},{"n":"ふりかけ","wd":true,"we":true,"star":false},{"n":"焼きのり","wd":true,"we":true,"star":false},{"n":"鏡もち","wd":true,"we":true,"star":false},{"n":"昆布・とろろ昆布","wd":true,"we":true,"star":false},{"n":"味付けのり","wd":true,"we":true,"star":false},{"n":"レトルト米飯","wd":true,"we":true,"star":false},{"n":"かつおパック","wd":true,"we":true,"star":false},{"n":"わかめ","wd":true,"we":true,"star":false},{"n":"ぬか・漬物用材","wd":true,"we":true,"star":false},{"n":"ごま","wd":true,"we":true,"star":false},{"n":"その他のり","wd":false,"we":true,"star":false},{"n":"小麦粉","wd":false,"we":true,"star":false},{"n":"春雨・ビーフン・葛切り","wd":false,"we":true,"star":false},{"n":"豆類","wd":false,"we":true,"star":false}]},{"major":"乾物","seg":"注目","cats":[{"n":"豆類","wd":true,"we":false,"star":false},{"n":"その他水産乾物","wd":true,"we":true,"star":false},{"n":"煮干し","wd":true,"we":true,"star":false},{"n":"お茶漬け","wd":false,"we":true,"star":false},{"n":"かつお削り節","wd":true,"we":true,"star":false},{"n":"椎茸","wd":true,"we":true,"star":false},{"n":"その他専用粉","wd":false,"we":true,"star":false},{"n":"その他粉","wd":true,"we":true,"star":false},{"n":"その他穀物","wd":false,"we":true,"star":false},{"n":"高野豆腐","wd":true,"we":true,"star":false},{"n":"生切もち","wd":true,"we":true,"star":false},{"n":"麦","wd":false,"we":true,"star":false},{"n":"お好み焼き粉","wd":false,"we":true,"star":false},{"n":"その他削り粉","wd":false,"we":true,"star":false},{"n":"ひじき","wd":false,"we":true,"star":false},{"n":"その他もち","wd":false,"we":true,"star":false},{"n":"麩","wd":false,"we":true,"star":false},{"n":"その他削り節","wd":false,"we":true,"star":false},{"n":"本節","wd":false,"we":true,"star":false}]},{"major":"嗜好食品","seg":"コア","cats":[{"n":"カップスープ","wd":true,"we":true,"star":false},{"n":"蜂蜜","wd":true,"we":true,"star":true},{"n":"シリアル大人向け","wd":true,"we":true,"star":false},{"n":"ビンジャム","wd":true,"we":true,"star":false},{"n":"袋スープ","wd":true,"we":true,"star":false},{"n":"その他スープ","wd":true,"we":true,"star":false},{"n":"スプレッド","wd":true,"we":true,"star":false},{"n":"スナックスープ","wd":true,"we":true,"star":false},{"n":"製菓材料","wd":false,"we":true,"star":false}]},{"major":"嗜好食品","seg":"注目","cats":[{"n":"調理スープ","wd":true,"we":true,"star":false},{"n":"甘味食品","wd":true,"we":true,"star":false},{"n":"水飴","wd":true,"we":true,"star":false},{"n":"ホットケーキミックス","wd":false,"we":true,"star":false},{"n":"あんこ","wd":false,"we":true,"star":false}]},{"major":"嗜好飲料","seg":"コア","cats":[{"n":"インスタントコーヒー","wd":true,"we":true,"star":false},{"n":"ミックスタイプインスタントコーヒー","wd":true,"we":true,"star":false},{"n":"簡易型レギュラーコーヒー","wd":true,"we":true,"star":false},{"n":"リーフ日本茶","wd":true,"we":true,"star":false},{"n":"レギュラーコーヒー（粉）","wd":true,"we":true,"star":false},{"n":"ティーバック日本茶","wd":true,"we":true,"star":false},{"n":"ティーバック紅茶","wd":true,"we":true,"star":false},{"n":"ココア","wd":true,"we":true,"star":false}]},{"major":"嗜好飲料","seg":"注目","cats":[{"n":"その他嗜好飲料","wd":true,"we":true,"star":false},{"n":"ティーバックその他嗜好飲料","wd":false,"we":true,"star":false},{"n":"インスタント紅茶","wd":true,"we":true,"star":false},{"n":"インスタント日本茶","wd":false,"we":true,"star":false},{"n":"ｲﾝｽﾀﾝﾄｸﾘｰﾐﾝｸﾞﾊﾟｳﾀﾞｰ（粉末）","wd":true,"we":true,"star":false},{"n":"麦芽","wd":false,"we":true,"star":true},{"n":"スキムミルク","wd":false,"we":true,"star":false},{"n":"リーフ紅茶","wd":false,"we":true,"star":false},{"n":"リーフウーロン茶","wd":false,"we":true,"star":false}]},{"major":"飲料水","seg":"コア","cats":[{"n":"炭酸飲料","wd":true,"we":true,"star":false},{"n":"緑茶飲料","wd":true,"we":true,"star":false},{"n":"国産ミネラルウォーター","wd":true,"we":true,"star":false},{"n":"コーヒー飲料","wd":true,"we":true,"star":false},{"n":"その他茶系飲料","wd":true,"we":true,"star":false},{"n":"トマト・野菜飲料","wd":true,"we":true,"star":false},{"n":"その他ドライ飲料水","wd":true,"we":true,"star":false},{"n":"紅茶飲料","wd":true,"we":true,"star":false},{"n":"機能性飲料","wd":true,"we":true,"star":false},{"n":"果汁飲料100%","wd":true,"we":true,"star":false},{"n":"ビアテイスト","wd":true,"we":true,"star":false},{"n":"スポーツドリンク","wd":true,"we":true,"star":false},{"n":"乳酸飲料","wd":true,"we":true,"star":false},{"n":"果汁飲料(99%未満)","wd":true,"we":true,"star":false},{"n":"果汁・野菜ミックス飲料","wd":true,"we":true,"star":false},{"n":"ブレンド茶飲料","wd":true,"we":true,"star":false},{"n":"その他低アルコール飲料","wd":false,"we":true,"star":false},{"n":"ウーロン茶飲料","wd":false,"we":true,"star":false}]},{"major":"飲料水","seg":"注目","cats":[{"n":"濃縮タイプ果汁飲料","wd":true,"we":true,"star":false}]},{"major":"乳製品","seg":"コア","cats":[{"n":"ポーションチーズ","wd":true,"we":true,"star":false},{"n":"スライスチーズ","wd":true,"we":true,"star":false},{"n":"プレーンバター","wd":true,"we":true,"star":false},{"n":"シュレッドチーズ","wd":true,"we":true,"star":false},{"n":"フレッシュチーズ","wd":true,"we":true,"star":false},{"n":"白カビチーズ","wd":true,"we":true,"star":false},{"n":"ファットスプレッド","wd":true,"we":true,"star":false},{"n":"その他ナチュラルチーズ","wd":true,"we":true,"star":false},{"n":"粉チーズ","wd":false,"we":true,"star":false}]},{"major":"乳製品","seg":"注目","cats":[{"n":"無塩マーガリン","wd":true,"we":false,"star":false},{"n":"無塩バター","wd":false,"we":true,"star":false},{"n":"その他プロセスチーズ","wd":true,"we":true,"star":false},{"n":"キャンディーチーズ","wd":false,"we":true,"star":false},{"n":"シェブルチーズ","wd":true,"we":false,"star":false},{"n":"バラエティーバター","wd":false,"we":true,"star":false},{"n":"その他バター","wd":true,"we":true,"star":false},{"n":"青カビチーズ","wd":false,"we":true,"star":false},{"n":"ハードマーガリン （有塩）","wd":true,"we":true,"star":false},{"n":"セミハードチーズ","wd":false,"we":true,"star":false},{"n":"ウオッシュチーズ","wd":false,"we":true,"star":false},{"n":"その他マーガリン・ショートニング","wd":false,"we":true,"star":true}]},{"major":"チルド飲料デザート","seg":"コア","cats":[{"n":"牛乳","wd":true,"we":true,"star":false},{"n":"その他洋風チルドデザート","wd":true,"we":true,"star":false},{"n":"乳酸菌飲料","wd":true,"we":true,"star":false},{"n":"ドリンクヨーグルト","wd":true,"we":true,"star":false},{"n":"フルーツヨーグルト","wd":true,"we":true,"star":false},{"n":"プレーンヨーグルト","wd":true,"we":true,"star":false},{"n":"強化乳(特殊乳)","wd":true,"we":true,"star":false},{"n":"豆乳","wd":true,"we":true,"star":false},{"n":"プリン（チルド）","wd":true,"we":true,"star":false},{"n":"チルドカップ飲料","wd":true,"we":true,"star":false},{"n":"加工乳","wd":true,"we":true,"star":false},{"n":"チルド果汁飲料100%","wd":true,"we":true,"star":false},{"n":"ホイップ用生クリーム","wd":true,"we":true,"star":false},{"n":"ゼリー（チルド）","wd":true,"we":true,"star":false},{"n":"その他ヨーグルト","wd":true,"we":true,"star":false},{"n":"チルド乳飲料","wd":true,"we":true,"star":false},{"n":"和風チルドデザート","wd":true,"we":false,"star":false}]},{"major":"チルド飲料デザート","seg":"注目","cats":[{"n":"ポーション生クリーム","wd":true,"we":false,"star":false}]},{"major":"アイスクリーム","seg":"コア","cats":[{"n":"ホームアイスマルチ","wd":true,"we":true,"star":false},{"n":"パーソナルアイスカップ","wd":true,"we":true,"star":false},{"n":"パーソナルアイスファンシー","wd":true,"we":true,"star":false},{"n":"プレミアムアイスカップ","wd":true,"we":true,"star":false},{"n":"パーソナルアイスモナカ","wd":true,"we":true,"star":false},{"n":"パーソナルアイスバー","wd":false,"we":true,"star":false}]},{"major":"冷凍食品","seg":"コア","cats":[{"n":"冷凍農産素材","wd":true,"we":true,"star":false},{"n":"冷凍洋風麺","wd":true,"we":true,"star":false},{"n":"冷凍ピラフ、炒飯","wd":true,"we":true,"star":false},{"n":"冷凍中華風惣菜","wd":true,"we":true,"star":false},{"n":"冷凍水産素材","wd":true,"we":true,"star":false},{"n":"冷凍和風麺","wd":true,"we":true,"star":false},{"n":"冷凍中華麺","wd":true,"we":true,"star":false},{"n":"冷凍畜産フライ","wd":true,"we":true,"star":false},{"n":"冷凍弁当用その他","wd":true,"we":true,"star":false},{"n":"冷凍グラタン、ドリア","wd":true,"we":true,"star":false},{"n":"冷凍弁当用畜産フライ","wd":false,"we":true,"star":false},{"n":"パックアイス（氷）","wd":false,"we":true,"star":false},{"n":"冷凍おにぎり","wd":false,"we":true,"star":false},{"n":"冷凍お好み焼、たこ焼","wd":false,"we":true,"star":false}]},{"major":"冷凍食品","seg":"注目","cats":[{"n":"冷凍その他スナック","wd":true,"we":true,"star":false},{"n":"冷凍弁当用コロッケ","wd":false,"we":true,"star":false},{"n":"冷凍肉まん、あんまん","wd":true,"we":true,"star":false},{"n":"冷生地","wd":true,"we":true,"star":false},{"n":"冷凍弁当用水産フライ","wd":false,"we":true,"star":false},{"n":"その他冷凍惣菜・調理","wd":true,"we":true,"star":false},{"n":"冷凍ピザ","wd":false,"we":true,"star":false},{"n":"冷凍ユニバーサルデザインフード","wd":true,"we":true,"star":false},{"n":"冷凍弁当用ハンバーグ","wd":false,"we":true,"star":false},{"n":"冷凍てんぷら","wd":false,"we":true,"star":false},{"n":"冷凍洋風惣菜","wd":false,"we":true,"star":false},{"n":"冷凍スープ","wd":false,"we":true,"star":false},{"n":"冷凍乳製品","wd":false,"we":true,"star":false}]},{"major":"パン・生菓子","seg":"コア","cats":[{"n":"菓子パン","wd":true,"we":true,"star":false},{"n":"食パン","wd":true,"we":true,"star":false},{"n":"食卓パン","wd":true,"we":true,"star":false},{"n":"焼き菓子（日配）","wd":true,"we":true,"star":false},{"n":"餅類（日配）","wd":true,"we":true,"star":false},{"n":"その他和菓子（日配）","wd":true,"we":true,"star":false},{"n":"饅頭（日配）","wd":true,"we":true,"star":false}]},{"major":"パン・生菓子","seg":"注目","cats":[{"n":"中華菓子（日配）","wd":true,"we":true,"star":false},{"n":"羊羹（日配）","wd":false,"we":true,"star":false}]},{"major":"和日配","seg":"コア","cats":[{"n":"豆腐","wd":true,"we":true,"star":false},{"n":"粒納豆","wd":true,"we":true,"star":false},{"n":"揚げ","wd":true,"we":true,"star":false},{"n":"揚げ物","wd":true,"we":true,"star":false},{"n":"キムチ","wd":true,"we":true,"star":false},{"n":"うどん (チルド麺)","wd":true,"we":true,"star":false},{"n":"ラーメン (チルド麺)","wd":true,"we":true,"star":false},{"n":"おでんセット","wd":true,"we":true,"star":false},{"n":"焼きそば (チルド麺)","wd":true,"we":true,"star":false},{"n":"佃煮","wd":true,"we":true,"star":false},{"n":"ちくわ","wd":true,"we":true,"star":false},{"n":"煮豆","wd":true,"we":true,"star":false},{"n":"その他おでん関連品","wd":true,"we":true,"star":false},{"n":"糸蒟蒻","wd":true,"we":true,"star":false},{"n":"はんぺん","wd":true,"we":true,"star":false},{"n":"惣菜納豆","wd":true,"we":true,"star":false},{"n":"板・玉蒟蒻","wd":true,"we":true,"star":false},{"n":"ひき割り納豆","wd":true,"we":true,"star":false},{"n":"麺関連品","wd":true,"we":true,"star":false},{"n":"その他豆腐加工品","wd":true,"we":true,"star":false},{"n":"蒲鉾","wd":true,"we":true,"star":false},{"n":"たくわん","wd":true,"we":true,"star":false},{"n":"浅漬","wd":true,"we":true,"star":false},{"n":"茶碗蒸","wd":true,"we":false,"star":false},{"n":"そば (チルド麺)","wd":true,"we":true,"star":false},{"n":"その他練製品","wd":true,"we":true,"star":false},{"n":"その他漬物","wd":false,"we":true,"star":false},{"n":"梅干","wd":false,"we":true,"star":false},{"n":"ゆで玉子","wd":false,"we":true,"star":false}]},{"major":"日配調理加工品・米飯・デリカ","seg":"コア","cats":[{"n":"調理パン","wd":true,"we":true,"star":false},{"n":"サラダ","wd":true,"we":true,"star":false},{"n":"チルド中華饅頭","wd":true,"we":true,"star":false},{"n":"和惣菜","wd":true,"we":true,"star":false},{"n":"チルドピザ類","wd":true,"we":true,"star":false},{"n":"麺類惣菜","wd":true,"we":true,"star":false},{"n":"チルド和風煮物","wd":true,"we":true,"star":false},{"n":"弁当","wd":true,"we":true,"star":false},{"n":"おにぎり","wd":true,"we":true,"star":false},{"n":"チルドスナック類","wd":true,"we":true,"star":false},{"n":"チルド餃子","wd":true,"we":true,"star":false},{"n":"チルド焼売","wd":true,"we":true,"star":false},{"n":"寿司","wd":false,"we":true,"star":false},{"n":"チルド鍋物類","wd":false,"we":true,"star":false},{"n":"その他チルド中華・アジア風調理加工品","wd":false,"we":true,"star":false}]},{"major":"日配調理加工品・米飯・デリカ","seg":"注目","cats":[{"n":"チルド鍋物類","wd":true,"we":false,"star":false},{"n":"チルド春巻・ワンタン","wd":true,"we":true,"star":true},{"n":"飯類惣菜","wd":true,"we":true,"star":false},{"n":"その他チルド洋風調理加工品","wd":false,"we":true,"star":false},{"n":"チルド洋風スープ","wd":true,"we":true,"star":false},{"n":"カレー・シチュー","wd":true,"we":true,"star":false},{"n":"チルド中華・アジア風スープ","wd":true,"we":true,"star":false},{"n":"チルドグラタン・ドリア","wd":true,"we":true,"star":false},{"n":"チルドフルーツソース","wd":true,"we":true,"star":false}]},{"major":"酒類","seg":"コア","cats":[{"n":"国産（５社）ビール","wd":true,"we":true,"star":false},{"n":"Ｓ低アルコールチューハイ","wd":true,"we":true,"star":false},{"n":"国産連続式焼酎","wd":true,"we":true,"star":false},{"n":"輸入スティルワイン","wd":true,"we":true,"star":false},{"n":"国産ウイスキー","wd":true,"we":true,"star":false},{"n":"Ｌ低アルコール・チューハイ","wd":true,"we":true,"star":false},{"n":"国産発泡酒","wd":true,"we":true,"star":false},{"n":"普通酒","wd":true,"we":true,"star":false},{"n":"麦焼酎","wd":true,"we":true,"star":false},{"n":"芋焼酎","wd":true,"we":true,"star":false},{"n":"国産スティルワイン","wd":true,"we":true,"star":false},{"n":"スパークリングワイン","wd":true,"we":true,"star":false},{"n":"純米酒","wd":true,"we":true,"star":false},{"n":"本みりん","wd":true,"we":true,"star":false},{"n":"純米吟醸酒","wd":true,"we":true,"star":false},{"n":"スコッチ","wd":true,"we":true,"star":false},{"n":"その他リキュール","wd":false,"we":true,"star":false}]},{"major":"酒類","seg":"注目","cats":[{"n":"その他スピリッツ","wd":true,"we":true,"star":false},{"n":"アメリカン","wd":false,"we":true,"star":false},{"n":"その他酒類関連商品","wd":true,"we":true,"star":false},{"n":"吟醸酒","wd":false,"we":true,"star":false},{"n":"かすとり焼酎","wd":true,"we":true,"star":false},{"n":"連単混和焼酎","wd":false,"we":true,"star":false},{"n":"その他酒類","wd":true,"we":true,"star":false},{"n":"輸入連続式焼酎","wd":false,"we":true,"star":false},{"n":"胡麻焼酎","wd":true,"we":false,"star":false},{"n":"梅酒","wd":false,"we":true,"star":false},{"n":"フレンチブランデー","wd":true,"we":false,"star":false},{"n":"本醸造","wd":false,"we":true,"star":false},{"n":"料理酒","wd":false,"we":true,"star":false},{"n":"原酒","wd":false,"we":true,"star":false},{"n":"米焼酎","wd":false,"we":true,"star":false},{"n":"発泡性清酒","wd":false,"we":true,"star":false},{"n":"甘味果実酒","wd":false,"we":true,"star":false},{"n":"本格リキュール","wd":false,"we":true,"star":false},{"n":"にごり酒","wd":false,"we":true,"star":false},{"n":"フルーツワイン","wd":false,"we":true,"star":false},{"n":"アイリッシュ","wd":false,"we":true,"star":false},{"n":"その他雑酒","wd":false,"we":true,"star":false},{"n":"米だけの酒","wd":false,"we":true,"star":false},{"n":"合成清酒","wd":false,"we":true,"star":true},{"n":"中国酒","wd":false,"we":true,"star":false},{"n":"カナディアン","wd":false,"we":true,"star":false},{"n":"ラム","wd":false,"we":true,"star":false},{"n":"テキーラ","wd":false,"we":true,"star":false},{"n":"その他単式焼酎","wd":false,"we":true,"star":false},{"n":"カルバドス","wd":false,"we":true,"star":true}]},{"major":"菓子","seg":"コア","cats":[{"n":"大袋／徳用チョコ","wd":true,"we":true,"star":false},{"n":"生ポテトスナック","wd":true,"we":true,"star":false},{"n":"洋風半生","wd":true,"we":true,"star":false},{"n":"豆菓子アソート／詰合せ","wd":true,"we":true,"star":false},{"n":"板チョコ・粒チョコ","wd":true,"we":true,"star":false},{"n":"徳用袋ビス・クッキー・ケーキ","wd":true,"we":true,"star":false},{"n":"せんべい（うるち米）","wd":true,"we":true,"star":false},{"n":"農産珍味","wd":true,"we":true,"star":false},{"n":"木の実","wd":true,"we":true,"star":false},{"n":"揚げ物（米菓）","wd":true,"we":true,"star":false},{"n":"のど飴／機能飴袋","wd":true,"we":true,"star":false},{"n":"箱／筒スナック","wd":true,"we":true,"star":false},{"n":"和風半生","wd":true,"we":true,"star":false},{"n":"ポケットグミ/ラムネ","wd":true,"we":true,"star":false},{"n":"ビスケット・クッキー","wd":true,"we":true,"star":false},{"n":"米菓ソフト","wd":true,"we":true,"star":false},{"n":"コーン系スナック","wd":true,"we":true,"star":false},{"n":"小麦系・ﾗｲｽ系・豆系スナック","wd":true,"we":true,"star":false},{"n":"チョコレート輸入品","wd":true,"we":true,"star":false},{"n":"袋ビス・クッキー","wd":true,"we":true,"star":false},{"n":"地飴／ベーシック飴袋","wd":true,"we":true,"star":false},{"n":"いか（珍味）","wd":true,"we":true,"star":false},{"n":"徳用・大袋米菓","wd":true,"we":true,"star":false},{"n":"畜産系珍味","wd":true,"we":true,"star":false},{"n":"カップゼリー","wd":true,"we":true,"star":false},{"n":"和風焼き菓子","wd":true,"we":true,"star":false},{"n":"あられ・おかき(もち米）","wd":true,"we":true,"star":false},{"n":"チョコ系ポケット","wd":true,"we":true,"star":false},{"n":"ドライフルーツ","wd":true,"we":true,"star":false},{"n":"かりんとう","wd":true,"we":true,"star":false},{"n":"ピーナッツ/落花生","wd":false,"we":true,"star":false},{"n":"水産系珍味","wd":false,"we":true,"star":false},{"n":"成形ポテトスナック","wd":false,"we":true,"star":false}]},{"major":"菓子","seg":"注目","cats":[{"n":"その他袋チョコ","wd":true,"we":false,"star":false},{"n":"ビスケット輸入品","wd":true,"we":true,"star":false},{"n":"共通玩具菓子","wd":false,"we":true,"star":false},{"n":"その他（クリスマス）","wd":true,"we":true,"star":false},{"n":"キャラクター（クリスマス）","wd":true,"we":true,"star":false},{"n":"その他ポケット菓子","wd":false,"we":true,"star":false},{"n":"詰合わせ（クリスマス）","wd":true,"we":true,"star":true},{"n":"米菓（ＰＢ百円均一）","wd":true,"we":true,"star":false},{"n":"キャンディ輸入品","wd":false,"we":true,"star":false},{"n":"キャラクターブーツ（クリスマス）","wd":true,"we":true,"star":false},{"n":"その他半生","wd":true,"we":false,"star":false},{"n":"駄菓子チョコレート/ビスケット","wd":false,"we":true,"star":false},{"n":"ポケット輸入品","wd":true,"we":true,"star":false},{"n":"男子玩具菓子","wd":false,"we":true,"star":false},{"n":"キャラクター飴袋","wd":true,"we":true,"star":false},{"n":"ブーツ（クリスマス）","wd":true,"we":true,"star":false},{"n":"その他（受験）","wd":true,"we":true,"star":true},{"n":"駄菓子キャンディー/ラムネ","wd":false,"we":true,"star":false},{"n":"キャンディー（受験）","wd":true,"we":true,"star":true},{"n":"ＮＳ","wd":false,"we":true,"star":false},{"n":"チョコレート（受験）","wd":true,"we":true,"star":false},{"n":"スナック（受験）","wd":true,"we":true,"star":false},{"n":"その他催事","wd":false,"we":true,"star":false},{"n":"全流協","wd":true,"we":true,"star":false},{"n":"その他（吊下げ）","wd":true,"we":true,"star":false},{"n":"珍味詰め合わせ","wd":false,"we":true,"star":false},{"n":"焼き菓子（吊下げ）","wd":false,"we":true,"star":false},{"n":"駄菓子詰合わせ","wd":false,"we":true,"star":false},{"n":"その他豆菓子","wd":false,"we":true,"star":false},{"n":"その他玩具菓子","wd":false,"we":true,"star":false}]},{"major":"その他加工食品","seg":"注目","cats":[{"n":"粉ミルク","wd":true,"we":true,"star":false}]}]};
+
+/* ===================== 1. small helpers ===================== */
+const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
+const mk = (t, cls, txt) => { const n = document.createElement(t); if (cls) n.className = cls; if (txt != null) n.textContent = txt; return n; };
+const num = v => (typeof v === 'number' && isFinite(v)) ? v : null;
+const f1 = v => v == null || !isFinite(v) ? '—' : v.toLocaleString('ja-JP', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const f0 = v => v == null || !isFinite(v) ? '—' : Math.round(v).toLocaleString('ja-JP');
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const mean = a => { let s = 0, n = 0; for (const v of a) if (v != null && isFinite(v)) { s += v; n++; } return n ? s / n : null; };
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const SERIES = ['--s1', '--s2', '--s3', '--s4', '--s5', '--s6', '--s7', '--s8'];
+
+function hash32(str) { let h = 2166136261 >>> 0; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+
+/* ===================== 2. sample dataset =====================
+   Real category taxonomy from the workbook; PI値 / 指数 are generated so the
+   dashboard opens in a working state. Clearly labelled as サンプル in the UI. */
+const SEASON_MAJOR = {
+  '調味料': [0.02, 0.20], 'インスタント': [0.02, 0.24], '瓶・缶詰': [0.05, 0.14], '麺類': [0.55, 0.28],
+  '乾物': [0.00, 0.20], '嗜好食品': [0.05, 0.16], '嗜好飲料': [0.00, 0.24], '飲料水': [0.55, 0.42],
+  '乳製品': [0.30, 0.13], 'チルド飲料デザート': [0.50, 0.22], 'アイスクリーム': [0.58, 0.62],
+  '冷凍食品': [0.10, 0.22], 'パン・生菓子': [0.15, 0.14], '和日配': [0.00, 0.19],
+  '日配調理加工品・米飯・デリカ': [0.05, 0.16], '酒類': [0.60, 0.26], '菓子': [0.90, 0.22], 'その他加工食品': [0.10, 0.13]
+};
+const SEASON_WORD = [
+  [['鍋物', 'すきやき', 'しゃぶしゃぶ', 'おでん', 'シチュー', '中華まん', '味噌', 'ゆず'], 0.985, 0.50],
+  [['アイス', '氷', 'そうめん', '冷し', '冷凍麺', '麦茶', '炭酸', 'ビール', 'スポーツ', 'ラムネ'], 0.56, 0.48],
+  [['ドレッシング', 'サラダ', 'トマト', 'ホール・カット'], 0.50, 0.24],
+  [['もち', '催事', '詰め合わせ', '詰合わせ', 'ギフト', '製菓材料'], 0.99, 0.66]
+];
+function seasonOf(major, cat) {
+  for (const [words, p, a] of SEASON_WORD) if (words.some(w => cat.indexOf(w) >= 0)) return [p, a];
+  return SEASON_MAJOR[major] || [0.1, 0.1];
+}
+function sampleWeeks(n) {
+  const out = [], anchor = Date.UTC(2025, 11, 1), DAY = 86400000;
+  for (let i = 0; i < n; i++) {
+    const t = anchor - (n - 1 - i) * 7 * DAY, d = new Date(t);
+    const back = n - 1 - i, no = ((41 - back - 1) % 52 + 52) % 52 + 1;
+    const ds = d.getUTCFullYear() + '/' + String(d.getUTCMonth() + 1).padStart(2, '0') + '/' + String(d.getUTCDate()).padStart(2, '0');
+    out.push({ i, no, date: ds, label: '第' + no + '週(' + ds + ')', short: '第' + no + '週', t });
+  }
+  return out;
+}
+function buildSample(nWeeks) {
+  const weeks = sampleWeeks(nWeeks), rows = [];
+  for (const sec of TAXO.sections) {
+    for (const c of sec.cats) {
+      const seed = hash32(sec.major + '|' + sec.seg + '|' + c.n), r = rng(seed);
+      const [phase, amp] = seasonOf(sec.major, c.n);
+      const base = Math.exp(1.0 + r() * 3.6) * (sec.seg === 'コア' ? 2.6 : 1.0);
+      const drift = (r() - 0.45) * 0.0022;
+      const holiLift = c.star ? 1.1 : 1.0;
+      const weLift = (1.04 + r() * 0.10) * (c.we && !c.wd ? 1.12 : 1.0) * holiLift;
+      const yoyBias = (r() - 0.5) * 16;
+      const pi = { '平日': [], '休日': [] };
+      for (let i = 0; i < nWeeks; i++) {
+        const woy = ((weeks[i].t / 86400000) / 365.25) % 1;
+        const s = 1 + amp * Math.cos(2 * Math.PI * (woy - phase));
+        const noise = 1 + (r() - 0.5) * 0.09;
+        const v = base * s * noise * (1 + drift * i);
+        pi['平日'].push(Math.max(0.3, v));
+        pi['休日'].push(Math.max(0.3, v * weLift * (1 + (r() - 0.5) * 0.10)));
+      }
+      for (const day of ['平日', '休日']) {
+        if (day === '平日' && !c.wd) continue;
+        if (day === '休日' && !c.we) continue;
+        const arr = pi[day];
+        for (let i = 0; i < nWeeks; i++) {
+          let idx;
+          if (i >= 52) {
+            const a = (arr[i] + arr[i - 1] + arr[i + 1 < nWeeks ? i + 1 : i]) / 3;
+            const b = (arr[i - 52] + arr[i - 53 >= 0 ? i - 53 : i - 52] + arr[i - 51]) / 3;
+            idx = clamp(a / b * 100, 55, 165);
+          } else {
+            idx = clamp(100 + yoyBias + (r() - 0.5) * 9, 55, 165);
+          }
+          rows.push({ w: i, major: sec.major, seg: sec.seg, day, cat: c.n,
+            pi: Math.round(arr[i] * 10) / 10, idx: Math.round(idx * 10) / 10,
+            star: !!c.star, holi: day === '休日' && !!c.we && (c.star || arr[i] / pi['平日'][i] > 1.15) });
+        }
+      }
+    }
+  }
+  return finalize({ source: 'サンプル数値', sample: true, region: TAXO.region, weeks, rows });
+}
+
+/* ===================== 3. xlsx reader (zip + sheetXML, no dependencies) ===================== */
+const u16 = (b, o) => b[o] | b[o + 1] << 8;
+const u32 = (b, o) => (b[o] | b[o + 1] << 8 | b[o + 2] << 16 | b[o + 3] << 24) >>> 0;
+const utf8 = b => new TextDecoder('utf-8').decode(b);
+
+function zipIndex(b) {
+  let eo = -1, lim = Math.max(0, b.length - 66000);
+  for (let i = b.length - 22; i >= lim; i--) if (u32(b, i) === 0x06054b50) { eo = i; break; }
+  if (eo < 0) throw new Error('xlsx（ZIP）として読み取れませんでした。ファイルが壊れていないか確認してください。');
+  let count = u16(b, eo + 10), cdOff = u32(b, eo + 16);
+  if (count === 0xffff || cdOff === 0xffffffff) {
+    const loc = eo - 20;
+    if (loc >= 0 && u32(b, loc) === 0x07064b50) {
+      const dv = new DataView(b.buffer, b.byteOffset);
+      const z64 = Number(dv.getBigUint64(loc + 8, true));
+      if (u32(b, z64) === 0x06064b50) { count = Number(dv.getBigUint64(z64 + 32, true)); cdOff = Number(dv.getBigUint64(z64 + 48, true)); }
+    }
+  }
+  const map = new Map();
+  let p = cdOff;
+  for (let i = 0; i < count; i++) {
+    if (u32(b, p) !== 0x02014b50) break;
+    const method = u16(b, p + 10), nlen = u16(b, p + 28), elen = u16(b, p + 30), clen = u16(b, p + 32);
+    let cs = u32(b, p + 20), off = u32(b, p + 42);
+    const name = utf8(b.subarray(p + 46, p + 46 + nlen));
+    if (cs === 0xffffffff || off === 0xffffffff) {
+      let q = p + 46 + nlen, end = q + elen;
+      while (q + 4 <= end) {
+        const id = u16(b, q), sz = u16(b, q + 2), dv = new DataView(b.buffer, b.byteOffset);
+        if (id === 1) { let k = q + 4; k += 8; if (cs === 0xffffffff) { cs = Number(dv.getBigUint64(k, true)); k += 8; } if (off === 0xffffffff) off = Number(dv.getBigUint64(k, true)); }
+        q += 4 + sz;
+      }
+    }
+    map.set(name, { method, cs, off });
+    p += 46 + nlen + elen + clen;
+  }
+  return map;
+}
+async function zipRead(b, e) {
+  if (!e) return null;
+  if (u32(b, e.off) !== 0x04034b50) throw new Error('ZIPのローカルヘッダが読めませんでした。');
+  const start = e.off + 30 + u16(b, e.off + 26) + u16(b, e.off + 28);
+  const data = b.subarray(start, start + e.cs);
+  if (e.method === 0) return utf8(data);
+  if (e.method !== 8) throw new Error('未対応の圧縮形式です（method ' + e.method + '）。');
+  if (typeof DecompressionStream !== 'function') throw new Error('このブラウザは xlsx の展開に必要な機能に対応していません。Chrome / Edge / Firefox / Safari の新しいバージョンでお試しください。');
+  const st = new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  return utf8(new Uint8Array(await new Response(st).arrayBuffer()));
+}
+const ENT = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+function dec(s) {
+  if (s.indexOf('&') < 0 && s.indexOf('_x') < 0) return s;
+  return s.replace(/&(#x?[0-9a-fA-F]+|amp|lt|gt|quot|apos);/g, (m, g) =>
+      g[0] === '#' ? String.fromCodePoint(parseInt(g[1] === 'x' || g[1] === 'X' ? g.slice(2) : g.slice(1), g[1] === 'x' || g[1] === 'X' ? 16 : 10)) : ENT[g])
+    .replace(/_x00(0A|0D|000a|000d)_/gi, '\n');
+}
+function texts(s) { let o = '', m, re = /<t[^>]*?(?:\/>|>([\s\S]*?)<\/t>)/g; while ((m = re.exec(s))) if (m[1]) o += dec(m[1]); return o; }
+function parseSST(xml) { const out = []; let m, re = /<si(?:\s[^>]*)?(?:\/>|>([\s\S]*?)<\/si>)/g; while ((m = re.exec(xml))) out.push(m[1] ? texts(m[1]) : ''); return out; }
+function colNum(s) { let n = 0; for (let i = 0; i < s.length; i++) n = n * 26 + (s.charCodeAt(i) - 64); return n; }
+const KEY = (r, c) => r * 4096 + c;
+
+function parseSheet(xml, sst) {
+  const cells = new Map(), merges = [];
+  let maxRow = 0, maxCol = 0, m;
+  const mre = /<mergeCell[^>]*ref="([A-Z]+\d+:[A-Z]+\d+)"/g;
+  while ((m = mre.exec(xml))) merges.push(m[1]);
+  const body = xml.slice(Math.max(0, xml.indexOf('<sheetData')));
+  const cre = /<c\s+r="([A-Z]+)(\d+)"([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g;
+  while ((m = cre.exec(body))) {
+    const c = colNum(m[1]), r = +m[2], attrs = m[3] || '', inner = m[4];
+    if (inner == null) continue;
+    const t = (attrs.match(/\st="([^"]+)"/) || [])[1];
+    let v = null;
+    if (t === 's') { const g = inner.match(/<v[^>]*>([\s\S]*?)<\/v>/); if (g) v = sst[+g[1]] ?? null; }
+    else if (t === 'inlineStr') { v = texts(inner) || null; }
+    else {
+      const g = inner.match(/<v[^>]*>([\s\S]*?)<\/v>/);
+      if (g) { if (t === 'str' || t === 'e') v = dec(g[1]); else { const n = parseFloat(g[1]); v = isFinite(n) ? n : dec(g[1]); } }
+    }
+    if (v === null || v === '') continue;
+    if (typeof v === 'string') { v = v.replace(/\n/g, '').trim(); if (!v) continue; }
+    cells.set(KEY(r, c), v);
+    if (r > maxRow) maxRow = r;
+    if (c > maxCol) maxCol = c;
+  }
+  for (const ref of merges) {
+    const p = ref.split(':'), a = p[0].match(/([A-Z]+)(\d+)/), z = p[1].match(/([A-Z]+)(\d+)/);
+    const r1 = +a[2], c1 = colNum(a[1]), r2 = +z[2], c2 = colNum(z[1]);
+    const v = cells.get(KEY(r1, c1));
+    if (v == null) continue;
+    for (let r = r1; r <= r2; r++) for (let c = c1; c <= c2; c++) if (!cells.has(KEY(r, c))) cells.set(KEY(r, c), v);
+  }
+  return { cells, maxRow, maxCol };
+}
+
+async function readWorkbook(file) {
+  const b = new Uint8Array(await file.arrayBuffer());
+  const zip = zipIndex(b);
+  const sstXml = await zipRead(b, zip.get('xl/sharedStrings.xml'));
+  const sst = sstXml ? parseSST(sstXml) : [];
+  const wbXml = await zipRead(b, zip.get('xl/workbook.xml'));
+  const relXml = await zipRead(b, zip.get('xl/_rels/workbook.xml.rels'));
+  if (!wbXml) throw new Error('xl/workbook.xml が見つかりません。Excel形式(.xlsx)のファイルを指定してください。');
+  const rel = new Map();
+  if (relXml) { let m, re = /<Relationship\b[^>]*>/g; while ((m = re.exec(relXml))) {
+      const id = (m[0].match(/Id="([^"]+)"/) || [])[1], tg = (m[0].match(/Target="([^"]+)"/) || [])[1];
+      if (id && tg) rel.set(id, tg.replace(/^\/?xl\//, '').replace(/^\//, ''));
+  } }
+  const sheets = [];
+  let m, sre = /<sheet\b[^>]*?\/?>/g;
+  while ((m = sre.exec(wbXml))) {
+    const nm = (m[0].match(/name="([^"]+)"/) || [])[1];
+    const rid = (m[0].match(/r:id="([^"]+)"/) || [])[1];
+    if (nm && rid && rel.has(rid)) sheets.push({ name: dec(nm), path: 'xl/' + rel.get(rid) });
+  }
+  if (!sheets.length) throw new Error('シートが見つかりませんでした。');
+  const out = [];
+  for (const s of sheets) {
+    const xml = await zipRead(b, zip.get(s.path));
+    if (xml) out.push({ name: s.name, grid: parseSheet(xml, sst) });
+  }
+  return out;
+}
+
+/* ===================== 4. layout mapping (9-column week blocks) ===================== */
+function mapSheet(sheet) {
+  const g = sheet.grid, get = (r, c) => g.cells.get(KEY(r, c));
+  let dayRow = -1;
+  for (let r = 1; r <= Math.min(24, g.maxRow); r++) {
+    let wd = false, we = false;
+    for (let c = 1; c <= g.maxCol; c++) { const v = get(r, c); if (v === '平日') wd = true; else if (v === '休日') we = true; }
+    if (wd && we) { dayRow = r; break; }
+  }
+  let bases = [];
+  if (dayRow > 0) {
+    for (let c = 1; c <= g.maxCol; c++) if (get(dayRow, c) === '平日') bases.push(c - 1);
+  }
+  if (!bases.length) { dayRow = 5; for (let c = 3; c + 8 <= Math.max(g.maxCol, 11); c += 9) bases.push(c); }
+  const weekRow = dayRow - 1, headRow = dayRow + 1, first = headRow + 1;
+  const weeks = [];
+  bases.forEach((base, i) => {
+    let label = null;
+    for (let c = base; c <= base + 8 && !label; c++) { const v = get(weekRow, c); if (typeof v === 'string' && /第\s*\d+\s*週/.test(v)) label = v; }
+    if (!label) for (let c = base; c <= base + 8 && !label; c++) { const v = get(weekRow, c); if (typeof v === 'string' && v.length > 2) label = v; }
+    const noM = label && label.match(/第\s*(\d+)\s*週/), dM = label && label.match(/(\d{4})\s*[\/年]\s*(\d{1,2})\s*[\/月]\s*(\d{1,2})/);
+    const no = noM ? +noM[1] : i + 1;
+    const date = dM ? dM[1] + '/' + String(+dM[2]).padStart(2, '0') + '/' + String(+dM[3]).padStart(2, '0') : null;
+    weeks.push({ i, base, no, date, label: label ? label.replace(/[～~]\s*$/, '') : '第' + no + '週', short: '第' + no + '週', t: date ? Date.parse(date.replace(/\//g, '-')) : i });
+  });
+  const rows = [];
+  for (let r = first; r <= g.maxRow; r++) {
+    const major = get(r, 1), seg = get(r, 2);
+    if (typeof major !== 'string' || typeof seg !== 'string') continue;
+    if (major.indexOf('104週') >= 0 || seg.indexOf('ＰＯＳ') >= 0) continue;
+    weeks.forEach(w => {
+      const b = w.base;
+      const specs = [[b, b + 1, b + 2, b + 3, null, '平日'], [b + 4, b + 5, b + 7, b + 8, b + 6, '休日']];
+      for (const [mk_, nk, pk, ik, hk, day] of specs) {
+        const cat = get(r, nk);
+        if (typeof cat !== 'string' || !cat) continue;
+        rows.push({ w: w.i, major, seg, day, cat,
+          pi: num(get(r, pk)), idx: num(get(r, ik)),
+          star: get(r, mk_) != null, holi: hk != null && get(r, hk) != null });
+      }
+    });
+  }
+  const region = (typeof get(weekRow, 1) === 'string' && get(weekRow, 1)) || sheet.name;
+  return { region, weeks, rows };
+}
+
+/* ===================== 5. dataset finalize + state ===================== */
+function finalize(ds) {
+  ds.weeks.sort((a, b) => a.t - b.t);
+  const remap = new Map(); ds.weeks.forEach((w, i) => { remap.set(w.i, i); });
+  ds.rows.forEach(r => { r.w = remap.get(r.w); });
+  ds.weeks.forEach((w, i) => { w.i = i; });
+  const n = ds.weeks.length, index = new Map(), majors = [];
+  for (const r of ds.rows) {
+    if (r.w == null) continue;
+    const k = r.day + '\u0000' + r.cat;
+    let e = index.get(k);
+    if (!e) { e = { day: r.day, cat: r.cat, major: r.major, seg: r.seg, star: false, holi: false, pi: new Array(n).fill(null), ix: new Array(n).fill(null) }; index.set(k, e); }
+    e.pi[r.w] = r.pi; e.ix[r.w] = r.idx;
+    if (r.star) e.star = true;
+    if (r.holi) e.holi = true;
+    if (majors.indexOf(r.major) < 0) majors.push(r.major);
+  }
+  ds.cats = Array.from(index.values());
+  ds.majors = majors;
+  ds.n = n;
+  return ds;
+}
+
+let DS = null;
+const S = { day: '平日', seg: '全体', major: '全体', star: false, holi: false, from: 0, to: 0,
+  view: 'trend', measure: 'pi', trendMode: 'chart', rankMode: 'chart', heatMode: 'chart',
+  heatAxis: 'week', rankWeek: 0, rankN: 15, picked: new Set(), search: '', catSort: 'pi',
+  tblWeek: -1, tblSearch: '', sort: { k: 'pi', d: -1 } };
+
+const tok = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim() || '#888';
+const range = () => { const a = []; for (let i = S.from; i <= S.to; i++) a.push(i); return a; };
+function pass(c) {
+  if (c.day !== S.day) return false;
+  if (S.seg !== '全体' && c.seg !== S.seg) return false;
+  if (S.major !== '全体' && c.major !== S.major) return false;
+  if (S.star && !c.star) return false;
+  if (S.holi && !c.holi) return false;
+  return true;
+}
+const selCats = () => DS.cats.filter(pass);
+const avg = (c, key) => { let s = 0, n = 0; for (let i = S.from; i <= S.to; i++) { const v = c[key][i]; if (v != null) { s += v; n++; } } return n ? s / n : null; };
+function latestIn(c, key) { for (let i = S.to; i >= S.from; i--) { const v = c[key][i]; if (v != null) return v; } return null; }
+
+/* ===================== 6. tooltip ===================== */
+const tipEl = $('#tip');
+function tipShow(x, y, html) {
+  tipEl.innerHTML = html; tipEl.style.opacity = '1';
+  const r = tipEl.getBoundingClientRect();
+  let left = x + 14, top = y - r.height - 12;
+  if (left + r.width > innerWidth - 8) left = x - r.width - 14;
+  if (left < 8) left = 8;
+  if (top < 8) top = y + 18;
+  tipEl.style.left = left + 'px'; tipEl.style.top = top + 'px';
+}
+const tipHide = () => { tipEl.style.opacity = '0'; };
+
+/* ===================== 7. header + KPI ===================== */
+function renderHead() {
+  $('#sourceText').textContent = DS.sample ? 'サンプル数値' : DS.source;
+  $('#sourceChip').className = 'chip' + (DS.sample ? '' : ' live');
+  $('#sourceChip').firstElementChild.className = 'dot' + (DS.sample ? ' sample' : '');
+  const a = DS.weeks[S.from], b = DS.weeks[S.to], nw = S.to - S.from + 1;
+  $('#weekSpan').textContent = nw === 1 ? (a.date ? a.short + '(' + a.date + ')' : a.label)
+    : (a.date && b.date ? a.date + '〜' + b.date + '（' + nw + 'w）' : a.short + '〜' + b.short + '（' + nw + 'w）');
+  $('#catCount').textContent = selCats().length + '件';
+  $('#subLine').textContent = DS.region + '・平日／休日別 カテゴリーPI値と前年同週比指数';
+  $('#loader').classList.toggle('hot', false);
+  $('#loaderTitle').textContent = DS.sample ? 'サンプル数値で表示中です' : DS.source + ' を読み込みました';
+  $('#loaderText').innerHTML = DS.sample
+    ? 'PI値・指数を入力した <b>104週POSデータ</b> の xlsx をこの枠にドロップすると、実数値に切り替わります。ファイルはブラウザ内だけで処理され、どこにも送信されません。'
+    : DS.n + '週 ／ ' + DS.cats.length + '系列を検出しました。別の週が追加された xlsx をドロップすれば、そのまま差し替わります。';
+  $('#demoBtn').hidden = !!DS.sample;
+}
+function renderKpi() {
+  const cs = selCats(), box = $('#kpis');
+  const piAvg = mean(cs.map(c => avg(c, 'pi'))), ixAvg = mean(cs.map(c => avg(c, 'ix')));
+  const ixs = cs.map(c => avg(c, 'ix')).filter(v => v != null);
+  const upN = ixs.filter(v => v >= 100).length;
+  const top = cs.slice().sort((a, b) => (avg(b, 'ix') ?? -1) - (avg(a, 'ix') ?? -1))[0];
+  const bot = cs.slice().sort((a, b) => (avg(a, 'ix') ?? 999) - (avg(b, 'ix') ?? 999))[0];
+  const items = [
+    ['対象週数', (S.to - S.from + 1), '週', DS.weeks[S.from].label + ' 〜', ''],
+    ['カテゴリー数', cs.length, '件', S.day + '・' + S.seg + (S.major === '全体' ? '' : '／' + S.major), ''],
+    ['平均PI値', f1(piAvg), '', '客数千人当り金額', ''],
+    ['平均指数', f1(ixAvg), '', ixAvg == null ? '—' : (ixAvg >= 100 ? '前年を上回る' : '前年を下回る'), ixAvg == null ? '' : (ixAvg >= 100 ? 'up' : 'dn')],
+    ['伸長カテゴリー', ixs.length ? Math.round(upN / ixs.length * 100) : '—', ixs.length ? '%' : '', upN + ' / ' + ixs.length + ' 件が指数100以上', ''],
+    ['最伸長', top && avg(top, 'ix') != null ? f1(avg(top, 'ix')) : '—', '', top && avg(top, 'ix') != null ? top.cat : '—', 'up'],
+    ['最減退', bot && avg(bot, 'ix') != null ? f1(avg(bot, 'ix')) : '—', '', bot && avg(bot, 'ix') != null ? bot.cat : '—', 'dn']
+  ];
+  box.textContent = '';
+  for (const [k, v, u, n, cls] of items) {
+    const d = mk('div', 'kpi');
+    d.appendChild(mk('span', 'k', k));
+    const val = mk('span', 'v'); val.textContent = v;
+    if (u) { const us = mk('span', 'u'); us.textContent = u; val.appendChild(us); }
+    d.appendChild(val);
+    d.appendChild(mk('span', 'n' + (cls ? ' ' + cls : ''), n));
+    box.appendChild(d);
+  }
+}
+
+/* ===================== 8. scales ===================== */
+function niceTicks(lo, hi, count) {
+  if (!(isFinite(lo) && isFinite(hi))) return { lo: 0, hi: 1, ticks: [0, 1] };
+  if (lo === hi) { lo -= 1; hi += 1; }
+  const raw = (hi - lo) / Math.max(1, count);
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= raw) || mag * 10;
+  const l = Math.floor(lo / step) * step, h = Math.ceil(hi / step) * step, ticks = [];
+  for (let v = l; v <= h + step / 2; v += step) ticks.push(Math.round(v * 1e6) / 1e6);
+  return { lo: l, hi: h, ticks };
+}
+function roundEndBar(x0, x1, y, h, r) {
+  const d = x1 >= x0 ? 1 : -1, w = Math.abs(x1 - x0), rr = Math.min(r, w, h / 2);
+  if (w < 0.6) return 'M' + x0 + ' ' + y + 'h0.6v' + h + 'h-0.6Z';
+  const e = x0 + d * (w - rr);
+  return d > 0
+    ? 'M' + x0 + ' ' + y + 'H' + e + 'a' + rr + ' ' + rr + ' 0 0 1 ' + rr + ' ' + rr + 'V' + (y + h - rr) + 'a' + rr + ' ' + rr + ' 0 0 1 ' + (-rr) + ' ' + rr + 'H' + x0 + 'Z'
+    : 'M' + x0 + ' ' + y + 'H' + e + 'a' + rr + ' ' + rr + ' 0 0 0 ' + (-rr) + ' ' + rr + 'V' + (y + h - rr) + 'a' + rr + ' ' + rr + ' 0 0 0 ' + rr + ' ' + rr + 'H' + x0 + 'Z';
+}
+const SVGNS = 'http://www.w3.org/2000/svg';
+function svgEl(t, attrs) { const n = document.createElementNS(SVGNS, t); for (const k in attrs) if (attrs[k] != null) n.setAttribute(k, attrs[k]); return n; }
+
+/* ===================== 9. trend view ===================== */
+function autoPick() {
+  const cs = selCats().slice().sort((a, b) => (latestIn(b, 'pi') ?? -1) - (latestIn(a, 'pi') ?? -1));
+  S.picked = new Set(cs.slice(0, 5).map(c => c.cat));
+}
+function pickedCats() {
+  const list = selCats().filter(c => S.picked.has(c.cat));
+  return list.slice(0, 8);
+}
+function renderPicker() {
+  const box = $('#catList'), q = S.search.trim();
+  let cs = selCats();
+  if (q) cs = cs.filter(c => c.cat.indexOf(q) >= 0);
+  const key = S.catSort === 'name' ? null : (S.catSort === 'pi' ? 'pi' : 'ix');
+  cs = cs.slice().sort((a, b) => {
+    if (!key) return a.cat.localeCompare(b.cat, 'ja');
+    const av = avg(a, key), bv = avg(b, key);
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    return S.catSort === 'idxlow' ? av - bv : bv - av;
+  });
+  box.textContent = '';
+  if (!cs.length) { box.appendChild(mk('div', 'empty', '該当するカテゴリーがありません')); }
+  for (const c of cs.slice(0, 300)) {
+    const lab = mk('label');
+    const cb = mk('input'); cb.type = 'checkbox'; cb.checked = S.picked.has(c.cat);
+    cb.addEventListener('change', () => {
+      if (cb.checked) { if (S.picked.size >= 8) { cb.checked = false; flash('比較は最大8カテゴリーまでです。どれかを外してから追加してください。'); return; } S.picked.add(c.cat); }
+      else S.picked.delete(c.cat);
+      renderTrend(); $('#pickCount').textContent = S.picked.size;
+    });
+    lab.appendChild(cb);
+    lab.appendChild(mk('span', 'nm', c.cat));
+    if (c.star) lab.appendChild(mk('span', 'mark star', '★'));
+    if (c.holi) lab.appendChild(mk('span', 'mark holi', '休'));
+    const m = mk('span', 'meta');
+    m.textContent = 'PI ' + f1(avg(c, 'pi')) + ' ／ 指数 ' + f1(avg(c, 'ix'));
+    lab.appendChild(m);
+    box.appendChild(lab);
+  }
+  $('#pickCount').textContent = S.picked.size;
+}
+function renderTrend() {
+  const host = $('#trendPlot'), cs = pickedCats(), rg = range(), key = S.measure === 'pi' ? 'pi' : 'ix';
+  $('#trendTitle').textContent = (S.measure === 'pi' ? 'PI値' : '前年同週比指数') + ' の週次推移（' + S.day + '）';
+  host.textContent = '';
+  $('#trendLegend').textContent = '';
+  const tbl = $('#trendTable');
+  tbl.hidden = S.trendMode !== 'table';
+  host.hidden = S.trendMode === 'table';
+  if (!cs.length) { host.hidden = false; tbl.hidden = true; host.appendChild(mk('div', 'empty', '下のリストからカテゴリーを選ぶと推移が表示されます')); return; }
+  if (S.trendMode === 'table') { trendTable(cs, rg, key); return; }
+
+  const W = Math.max(320, host.clientWidth || 700), narrow = W < 560;
+  const mL = narrow ? 40 : 48, mR = narrow ? 14 : 62, mT = 14, mB = 30, H = narrow ? 240 : 310;
+  const iw = W - mL - mR, ih = H - mT - mB;
+  let lo = Infinity, hi = -Infinity;
+  for (const c of cs) for (const i of rg) { const v = c[key][i]; if (v != null) { if (v < lo) lo = v; if (v > hi) hi = v; } }
+  if (!isFinite(lo)) { host.appendChild(mk('div', 'empty', 'この条件では' + (S.measure === 'pi' ? 'PI値' : '指数') + 'が入力されていません')); return; }
+  if (key === 'ix') { lo = Math.min(lo, 96); hi = Math.max(hi, 104); } else { lo = Math.min(lo, 0); }
+  const sc = niceTicks(lo, hi, 5);
+  const X = i => mL + (rg.length === 1 ? iw / 2 : (rg.indexOf(i)) * iw / (rg.length - 1));
+  const Y = v => mT + ih - (v - sc.lo) / (sc.hi - sc.lo) * ih;
+  const svg = svgEl('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': '選択カテゴリーの週次推移' });
+
+  for (const t of sc.ticks) {
+    svg.appendChild(svgEl('line', { class: 'gl', x1: mL, x2: mL + iw, y1: Y(t), y2: Y(t) }));
+    const tx = svgEl('text', { class: 'tk', x: mL - 7, y: Y(t) + 3.5, 'text-anchor': 'end' });
+    tx.textContent = key === 'ix' ? t : f0(t);
+    svg.appendChild(tx);
+  }
+  if (key === 'ix' && sc.lo < 100 && sc.hi > 100) {
+    svg.appendChild(svgEl('line', { class: 'ref', x1: mL, x2: mL + iw, y1: Y(100), y2: Y(100), 'stroke-dasharray': null }));
+    const rl = svgEl('text', { class: 'tk mid', x: mL + iw, y: Y(100) - 6, 'text-anchor': 'end' });
+    rl.textContent = '前年＝100';
+    svg.appendChild(rl);
+  }
+  svg.appendChild(svgEl('line', { class: 'axl', x1: mL, x2: mL + iw, y1: mT + ih, y2: mT + ih }));
+  const nTick = narrow ? 4 : 8, stepT = Math.max(1, Math.ceil(rg.length / nTick));
+  rg.forEach((i, k) => {
+    if (k % stepT && k !== rg.length - 1) return;
+    const t = svgEl('text', { class: 'tk', x: X(i), y: mT + ih + 15, 'text-anchor': k === rg.length - 1 ? 'end' : 'middle' });
+    t.textContent = DS.weeks[i].short;
+    svg.appendChild(t);
+    const d = DS.weeks[i].date;
+    if (d && !narrow) { const t2 = svgEl('text', { class: 'tk', x: X(i), y: mT + ih + 26, 'text-anchor': k === rg.length - 1 ? 'end' : 'middle' }); t2.textContent = d.slice(5); svg.appendChild(t2); }
+  });
+
+  cs.forEach((c, si) => {
+    const col = 'var(' + SERIES[si % 8] + ')';
+    let d = '', open = false;
+    for (const i of rg) {
+      const v = c[key][i];
+      if (v == null) { open = false; continue; }
+      d += (open ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(v).toFixed(1) + ' ';
+      open = true;
+    }
+    svg.appendChild(svgEl('path', { d, fill: 'none', style: 'stroke:' + col, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+    if (rg.length === 1) { const v = c[key][rg[0]]; if (v != null) svg.appendChild(svgEl('circle', { cx: X(rg[0]), cy: Y(v), r: 4.5, style: 'fill:' + col, stroke: 'var(--surface)', 'stroke-width': 2 })); }
+    if (cs.length <= 4 && !narrow) {
+      const lv = latestIn(c, key);
+      if (lv != null) {
+        let li = S.to; for (let i = S.to; i >= S.from; i--) if (c[key][i] != null) { li = i; break; }
+        const t = svgEl('text', { class: 'dl', x: X(li) + 7, y: Y(lv) + 3.5, style: 'fill:' + col });
+        t.textContent = key === 'ix' ? f1(lv) : f1(lv);
+        svg.appendChild(t);
+      }
+    }
+    const li = mk('li');
+    const sw = mk('span', 'sw ln'); sw.style.background = col;
+    li.appendChild(sw); li.appendChild(mk('span', null, c.cat));
+    $('#trendLegend').appendChild(li);
+  });
+
+  const hair = svgEl('line', { class: 'hair', y1: mT, y2: mT + ih, x1: -99, x2: -99 });
+  svg.appendChild(hair);
+  const dots = svgEl('g', {});
+  svg.appendChild(dots);
+  const hit = svgEl('rect', { x: mL, y: mT, width: iw, height: ih, fill: 'transparent', style: 'cursor:crosshair' });
+  svg.appendChild(hit);
+  const move = ev => {
+    const r = svg.getBoundingClientRect(), px = (ev.clientX - r.left) / r.width * W;
+    let k = rg.length === 1 ? 0 : Math.round((px - mL) / (iw / (rg.length - 1)));
+    k = clamp(k, 0, rg.length - 1);
+    const i = rg[k];
+    hair.setAttribute('x1', X(i)); hair.setAttribute('x2', X(i));
+    dots.textContent = '';
+    let rowsHtml = '';
+    cs.forEach((c, si) => {
+      const v = c[key][i], col = 'var(' + SERIES[si % 8] + ')';
+      if (v == null) { rowsHtml += '<tr><td class="c"><span class="sw ln" style="background:' + col + '"></span>' + esc(c.cat) + '</td><td class="v">—</td></tr>'; return; }
+      dots.appendChild(svgEl('circle', { cx: X(i), cy: Y(v), r: 4.5, style: 'fill:' + col, stroke: 'var(--surface)', 'stroke-width': 2 }));
+      rowsHtml += '<tr><td class="c"><span class="sw ln" style="background:' + col + '"></span>' + esc(c.cat) + '</td><td class="v">' + f1(v) + '</td></tr>';
+    });
+    tipShow(ev.clientX, ev.clientY, '<div class="tt-h">' + esc(DS.weeks[i].label) + ' ／ ' + S.day + '<br><span style="font-weight:400;color:var(--ink-3)">' + (key === 'ix' ? '前年同週比指数' : 'PI値') + '</span></div><table>' + rowsHtml + '</table>');
+  };
+  hit.addEventListener('pointermove', move);
+  hit.addEventListener('pointerdown', move);
+  hit.addEventListener('pointerleave', () => { tipHide(); hair.setAttribute('x1', -99); hair.setAttribute('x2', -99); dots.textContent = ''; });
+  host.appendChild(svg);
+}
+function trendTable(cs, rg, key) {
+  const t = $('#trendTable');
+  let h = '<div class="dtwrap"><table class="dt"><thead><tr><th>週</th>' + cs.map(c => '<th style="text-align:right">' + esc(c.cat) + '</th>').join('') + '</tr></thead><tbody>';
+  for (let k = rg.length - 1; k >= 0; k--) {
+    const i = rg[k];
+    h += '<tr><td>' + esc(DS.weeks[i].label) + '</td>' + cs.map(c => '<td class="num">' + f1(c[key][i]) + '</td>').join('') + '</tr>';
+  }
+  t.innerHTML = h + '</tbody></table></div>';
+}
+
+/* ===================== 10. ranking view ===================== */
+function renderRank() {
+  const host = $('#rankPlot'), tbl = $('#rankTable'), w = clamp(S.rankWeek, 0, DS.n - 1);
+  const cs = selCats().filter(c => c.ix[w] != null);
+  host.textContent = ''; tbl.textContent = '';
+  tbl.hidden = S.rankMode !== 'table'; host.hidden = S.rankMode === 'table';
+  if (!cs.length) { host.hidden = false; tbl.hidden = true; host.appendChild(mk('div', 'empty', DS.weeks[w].label + ' には指数が入力されていません')); return; }
+  const sorted = cs.slice().sort((a, b) => b.ix[w] - a.ix[w]);
+  const N = Math.min(S.rankN, Math.ceil(sorted.length / 2));
+  const up = sorted.slice(0, N), dn = sorted.slice(-N).reverse();
+  const groups = [['伸長 TOP' + up.length, up], ['減退 TOP' + dn.length, dn]];
+  if (S.rankMode === 'table') {
+    let h = '<div class="dtwrap"><table class="dt"><thead><tr><th>順位</th><th>区分</th><th>大分類</th><th>カテゴリー</th><th style="text-align:right">指数</th><th style="text-align:right">前年差pt</th><th style="text-align:right">PI値</th></tr></thead><tbody>';
+    groups.forEach(([ttl, list]) => {
+      h += '<tr><td colspan="7" style="background:var(--surface-2);font-weight:600">' + ttl + '</td></tr>';
+      list.forEach((c, k) => {
+        const d = c.ix[w] - 100;
+        h += '<tr><td class="num">' + (k + 1) + '</td><td>' + esc(c.seg) + '</td><td>' + esc(c.major) + '</td><td class="cat">' + esc(c.cat) + (c.star ? ' ★' : '') + (c.holi ? ' 休' : '') + '</td>'
+          + '<td class="num ' + (d >= 0 ? 'up' : 'dn') + '">' + f1(c.ix[w]) + '</td><td class="num">' + (d >= 0 ? '+' : '') + f1(d) + '</td><td class="num">' + f1(c.pi[w]) + '</td></tr>';
+      });
+    });
+    tbl.innerHTML = h + '</tbody></table></div>';
+    return;
+  }
+  const W = Math.max(320, host.clientWidth || 700), narrow = W < 620;
+  const labW = narrow ? 112 : 186, valW = 54, barH = narrow ? 15 : 17, gap = 7, hdH = 24;
+  const bx = labW, bw = W - labW - valW;
+  const span = Math.max(5, ...groups.flatMap(([, l]) => l.map(c => Math.abs(c.ix[w] - 100))));
+  const dom = Math.ceil(span / 5) * 5;
+  const x0 = bx + bw / 2, sx = v => x0 + (v / dom) * (bw / 2);
+  const H = groups.reduce((a, [, l]) => a + hdH + l.length * (barH + gap), 0) + 38;
+  const svg = svgEl('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': '前年比ランキング' });
+  for (const t of [-dom, -dom / 2, 0, dom / 2, dom]) {
+    svg.appendChild(svgEl('line', { class: t === 0 ? 'axl' : 'gl', x1: sx(t), x2: sx(t), y1: 16, y2: H - 26 }));
+    const tx = svgEl('text', { class: t === 0 ? 'tk mid' : 'tk', x: sx(t), y: H - 9, 'text-anchor': 'middle' });
+    tx.textContent = f0(100 + t);
+    svg.appendChild(tx);
+  }
+  const cap = svgEl('text', { class: 'tk mid', x: sx(0), y: 10, 'text-anchor': 'middle' });
+  cap.textContent = '指数（前年同週＝100）';
+  svg.appendChild(cap);
+  let y = 22;
+  groups.forEach(([ttl, list]) => {
+    const h = svgEl('text', { class: 'vl', x: 0, y: y + 13 });
+    h.textContent = ttl;
+    svg.appendChild(h);
+    y += hdH;
+    list.forEach(c => {
+      const v = c.ix[w], d = v - 100, pos = d >= 0;
+      const lab = svgEl('text', { class: 'cl', x: 0, y: y + barH - 3 });
+      lab.textContent = (c.cat.length > (narrow ? 8 : 14) ? c.cat.slice(0, narrow ? 8 : 14) + '…' : c.cat);
+      svg.appendChild(lab);
+      const g = svgEl('g', { style: 'cursor:default' });
+      g.appendChild(svgEl('rect', { x: bx, y: y - gap / 2, width: bw, height: barH + gap, fill: 'transparent' }));
+      g.appendChild(svgEl('path', { d: roundEndBar(x0, sx(clamp(d, -dom, dom)), y, barH, 4), style: 'fill:var(' + (pos ? '--pos' : '--neg') + ')' }));
+      const vt = svgEl('text', { class: 'dl', x: W - valW + 6, y: y + barH - 3.5, style: 'fill:var(--ink-2)' });
+      vt.textContent = f1(v);
+      g.appendChild(vt);
+      g.addEventListener('pointerenter', ev => tipShow(ev.clientX, ev.clientY,
+        '<div class="tt-h">' + esc(c.cat) + '</div><table>'
+        + '<tr><td class="c">大分類</td><td class="v">' + esc(c.major) + '／' + esc(c.seg) + '</td></tr>'
+        + '<tr><td class="c">指数</td><td class="v">' + f1(v) + '</td></tr>'
+        + '<tr><td class="c">前年差</td><td class="v">' + (pos ? '+' : '') + f1(d) + ' pt</td></tr>'
+        + '<tr><td class="c">PI値</td><td class="v">' + f1(c.pi[w]) + '</td></tr>'
+        + (c.star || c.holi ? '<tr><td class="c">印</td><td class="v">' + (c.star ? '★注目 ' : '') + (c.holi ? '休日伸長' : '') + '</td></tr>' : '')
+        + '</table>'));
+      g.addEventListener('pointermove', ev => tipShow(ev.clientX, ev.clientY, tipEl.innerHTML));
+      g.addEventListener('pointerleave', tipHide);
+      svg.appendChild(g);
+      y += barH + gap;
+    });
+  });
+  host.appendChild(svg);
+}
+
+/* ===================== 11. heatmap view ===================== */
+function binVar(v) {
+  if (v == null) return null;
+  const d = v - 100;
+  if (d >= 10) return '--h-p4';
+  if (d >= 6) return '--h-p3';
+  if (d >= 3) return '--h-p2';
+  if (d >= 1) return '--h-p1';
+  if (d > -1) return '--h-mid';
+  if (d > -3) return '--h-n1';
+  if (d > -6) return '--h-n2';
+  if (d > -10) return '--h-n3';
+  return '--h-n4';
+}
+function heatCells() {
+  const majors = DS.majors.filter(m => S.major === '全体' || m === S.major);
+  const cols = S.heatAxis === 'week' ? range().map(i => ({ k: i, label: DS.weeks[i].short, full: DS.weeks[i].label }))
+    : ['コア', '注目'].filter(s => S.seg === '全体' || s === S.seg).map(s => ({ k: s, label: s, full: s + '区分' }));
+  const cells = new Map();
+  for (const c of selCats()) {
+    if (!majors.includes(c.major)) continue;
+    if (S.heatAxis === 'week') {
+      for (const i of range()) { const v = c.ix[i]; if (v == null) continue; const k = c.major + '\u0000' + i; const e = cells.get(k) || [0, 0]; e[0] += v; e[1]++; cells.set(k, e); }
+    } else {
+      const v = avg(c, 'ix'); if (v == null) continue;
+      const k = c.major + '\u0000' + c.seg; const e = cells.get(k) || [0, 0]; e[0] += v; e[1]++; cells.set(k, e);
+    }
+  }
+  return { majors, cols, cells };
+}
+function renderHeat() {
+  const host = $('#heatPlot'), tbl = $('#heatTable'), lg = $('#heatLegend');
+  const { majors, cols, cells } = heatCells();
+  host.textContent = ''; tbl.textContent = '';
+  host.hidden = S.heatMode === 'table';
+  tbl.hidden = S.heatMode !== 'table';
+  lg.hidden = S.heatMode === 'table';
+  if (!majors.length || !cols.length) { host.hidden = false; host.appendChild(mk('div', 'empty', '表示できるデータがありません')); return; }
+  const get = (m, k) => { const e = cells.get(m + '\u0000' + k); return e ? [e[0] / e[1], e[1]] : null; };
+  if (S.heatMode === 'table') {
+    let h = '<div class="dtwrap"><table class="dt"><thead><tr><th>大分類</th>' + cols.map(c => '<th style="text-align:right">' + esc(c.label) + '</th>').join('') + '</tr></thead><tbody>';
+    for (const m of majors) h += '<tr><td>' + esc(m) + '</td>' + cols.map(c => { const g = get(m, c.k); return '<td class="num ' + (g ? (g[0] >= 100 ? 'up' : 'dn') : '') + '">' + (g ? f1(g[0]) : '—') + '</td>'; }).join('') + '</tr>';
+    tbl.innerHTML = h + '</tbody></table></div>';
+    return;
+  }
+  const t = mk('table', 'hm' + (S.heatAxis === 'seg' ? ' wide' : ''));
+  const narrow = window.innerWidth < 560;
+  const labW = narrow ? 104 : 148, cellW = S.heatAxis === 'seg' ? 92 : (narrow ? 11 : 14);
+  const cg = mk('colgroup'), c0 = mk('col');
+  c0.style.width = labW + 'px'; cg.appendChild(c0);
+  cols.forEach(() => { const cc = mk('col'); cc.style.width = cellW + 'px'; cg.appendChild(cc); });
+  t.appendChild(cg);
+  t.style.tableLayout = 'fixed';
+  t.style.width = (labW + cols.length * (cellW + 2) + 4) + 'px';
+  t.style.marginRight = '32px';
+  const thead = mk('thead'), hr = mk('tr');
+  hr.appendChild(mk('th', null, ''));
+  const stepT = S.heatAxis === 'week' ? Math.max(1, Math.ceil(cols.length / (narrow ? 5 : 13))) : 1;
+  cols.forEach((c, k) => {
+    const th = mk('th', null, (k % stepT === 0 || k === cols.length - 1) ? (S.heatAxis === 'week' ? '第' + DS.weeks[c.k].no + 'w' : c.label) : '');
+    hr.appendChild(th);
+  });
+  thead.appendChild(hr); t.appendChild(thead);
+  const tb = mk('tbody');
+  for (const m of majors) {
+    const tr = mk('tr');
+    const rh = mk('th', null, m); rh.title = m; tr.appendChild(rh);
+    for (const c of cols) {
+      const g = get(m, c.k), td = mk('td');
+      if (!g) { td.className = 'na'; td.setAttribute('aria-label', m + ' ' + c.label + ' データなし'); }
+      else {
+        td.style.background = 'var(' + binVar(g[0]) + ')';
+        if (S.heatAxis === 'seg') { td.textContent = f1(g[0]); td.style.color = 'var(--ink)'; }
+        td.tabIndex = 0;
+        td.setAttribute('aria-label', m + ' ' + c.label + ' 平均指数 ' + f1(g[0]));
+        const html = '<div class="tt-h">' + esc(m) + ' ／ ' + esc(c.full) + '</div><table>'
+          + '<tr><td class="c">平均指数</td><td class="v">' + f1(g[0]) + '</td></tr>'
+          + '<tr><td class="c">前年差</td><td class="v">' + (g[0] >= 100 ? '+' : '') + f1(g[0] - 100) + ' pt</td></tr>'
+          + '<tr><td class="c">対象</td><td class="v">' + g[1] + ' 件</td></tr></table>';
+        td.addEventListener('pointerenter', ev => tipShow(ev.clientX, ev.clientY, html));
+        td.addEventListener('pointermove', ev => tipShow(ev.clientX, ev.clientY, html));
+        td.addEventListener('pointerleave', tipHide);
+        td.addEventListener('focus', () => { const r = td.getBoundingClientRect(); tipShow(r.right, r.top, html); });
+        td.addEventListener('blur', tipHide);
+      }
+      tr.appendChild(td);
+    }
+    tb.appendChild(tr);
+  }
+  t.appendChild(tb);
+  host.appendChild(t);
+  lg.textContent = '';
+  lg.appendChild(mk('span', 'lb', '減退'));
+  for (const v of ['--h-n4', '--h-n3', '--h-n2', '--h-n1', '--h-mid', '--h-p1', '--h-p2', '--h-p3', '--h-p4']) {
+    const c = mk('span', 'cell'); c.style.background = 'var(' + v + ')'; lg.appendChild(c);
+  }
+  lg.appendChild(mk('span', 'lb', '伸長'));
+  lg.appendChild(mk('span', 'lb', '　（前年差 −10 / −6 / −3 / −1 ／ 0 ／ +1 / +3 / +6 / +10 pt）'));
+}
+
+/* ===================== 12. data table view ===================== */
+const COLS = [['week', '週', 0], ['major', '大分類', 0], ['seg', '区分', 0], ['cat', 'カテゴリー', 0], ['pi', 'PI値', 1], ['ix', '指数', 1], ['dpt', '前年差pt', 1], ['mark', '印', 0]];
+function tableRows() {
+  const q = S.tblSearch.trim();
+  const ws = S.tblWeek < 0 ? range() : [S.tblWeek];
+  const out = [];
+  for (const c of selCats()) {
+    if (q && c.cat.indexOf(q) < 0) continue;
+    for (const i of ws) {
+      if (c.pi[i] == null && c.ix[i] == null) continue;
+      out.push({ wi: i, week: DS.weeks[i].label, major: c.major, seg: c.seg, cat: c.cat,
+        pi: c.pi[i], ix: c.ix[i], dpt: c.ix[i] == null ? null : c.ix[i] - 100,
+        mark: (c.star ? '★' : '') + (c.holi ? '休' : '') });
+    }
+  }
+  const k = S.sort.k, d = S.sort.d;
+  out.sort((a, b) => {
+    const av = a[k], bv = b[k];
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    if (typeof av === 'number') return (av - bv) * d;
+    return String(av).localeCompare(String(bv), 'ja') * d;
+  });
+  return out;
+}
+function renderTable() {
+  const rows = tableRows();
+  $('#dtHead').innerHTML = '<tr>' + COLS.map(([k, l, n]) =>
+    '<th data-k="' + k + '"' + (n ? ' style="text-align:right"' : '') + '>' + l + (S.sort.k === k ? ' <span class="ar">' + (S.sort.d < 0 ? '▼' : '▲') + '</span>' : '') + '</th>').join('') + '</tr>';
+  const show = rows.slice(0, 600);
+  $('#dtBody').innerHTML = show.map(r => '<tr>'
+    + '<td>' + esc(r.week) + '</td><td>' + esc(r.major) + '</td><td>' + esc(r.seg) + '</td><td class="cat">' + esc(r.cat) + '</td>'
+    + '<td class="num">' + f1(r.pi) + '</td>'
+    + '<td class="num ' + (r.ix == null ? '' : r.ix >= 100 ? 'up' : 'dn') + '">' + f1(r.ix) + '</td>'
+    + '<td class="num">' + (r.dpt == null ? '—' : (r.dpt >= 0 ? '+' : '') + f1(r.dpt)) + '</td>'
+    + '<td>' + esc(r.mark) + '</td></tr>').join('');
+  $('#tblLede').textContent = '絞り込み条件（' + S.day + '／' + S.seg + '／' + S.major + '）に一致 ' + rows.length.toLocaleString('ja-JP') + ' 行'
+    + (rows.length > show.length ? '　※画面には先頭600行を表示しています。全件は「CSVをコピー」で取得できます。' : '');
+  $('#dtHead').querySelectorAll('th').forEach(th => th.addEventListener('click', () => {
+    const k = th.dataset.k;
+    S.sort = { k, d: S.sort.k === k ? -S.sort.d : (['pi', 'ix', 'dpt'].includes(k) ? -1 : 1) };
+    renderTable();
+  }));
+}
+function csvText() {
+  const rows = tableRows();
+  const head = ['週', '週番号', '開始日', '地域', '曜日区分', '大分類', '区分', 'カテゴリー', 'PI値', '指数', '前年差pt', '印'];
+  const lines = [head.join(',')];
+  for (const r of rows) {
+    const w = DS.weeks[r.wi];
+    lines.push([w.label, w.no, w.date || '', DS.region, S.day, r.major, r.seg, r.cat,
+      r.pi ?? '', r.ix ?? '', r.dpt == null ? '' : Math.round(r.dpt * 10) / 10, r.mark]
+      .map(v => /[",\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v)).join(','));
+  }
+  return lines.join('\r\n');
+}
+
+/* ===================== 13. wiring ===================== */
+function flash(msg, bad) {
+  const e = $('#err');
+  e.hidden = false; e.textContent = msg;
+  e.className = bad === false ? 'err ok' : 'err';
+  clearTimeout(flash._t);
+  flash._t = setTimeout(() => { e.hidden = true; }, 6000);
+}
+function fillWeekSelects() {
+  const opts = DS.weeks.map(w => '<option value="' + w.i + '">' + esc(w.label) + '</option>').join('');
+  $('#fFrom').innerHTML = opts; $('#fTo').innerHTML = opts; $('#rankWeek').innerHTML = opts;
+  $('#tblWeek').innerHTML = '<option value="-1">全期間</option>' + opts;
+  $('#fFrom').value = S.from; $('#fTo').value = S.to; $('#rankWeek').value = S.rankWeek;
+  $('#tblWeek').value = S.tblWeek;
+  $('#fMajor').innerHTML = '<option>全体</option>' + DS.majors.map(m => '<option>' + esc(m) + '</option>').join('');
+  $('#fMajor').value = S.major;
+}
+function renderView() {
+  if (S.view === 'trend') renderTrend();
+  else if (S.view === 'rank') renderRank();
+  else if (S.view === 'heat') renderHeat();
+  else renderTable();
+}
+function renderAll() {
+  renderHead(); renderKpi();
+  if (!pickedCats().length && selCats().length) autoPick();
+  renderPicker(); renderView();
+}
+function setView(v) {
+  S.view = v;
+  $$('#tabs button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.v === v)));
+  ['trend', 'rank', 'heat', 'table'].forEach(k => { $('#view-' + k).hidden = k !== v; });
+  renderView();
+}
+function seg(id, onPick) {
+  const box = $(id);
+  box.addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    Array.from(box.children).forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    onPick(b.dataset.v);
+  });
+}
+function load(ds) {
+  DS = ds;
+  S.from = 0; S.to = DS.n - 1; S.rankWeek = DS.n - 1; S.tblWeek = -1;
+  S.picked = new Set();
+  if (!DS.majors.includes(S.major)) S.major = '全体';
+  fillWeekSelects();
+  autoPick();
+  renderAll();
+}
+async function openFile(file) {
+  const e = $('#err'); e.hidden = true;
+  try {
+    $('#loaderTitle').textContent = file.name + ' を解析中…';
+    const sheets = await readWorkbook(file);
+    const mapped = sheets.map(mapSheet).filter(m => m.rows.length);
+    if (!mapped.length) throw new Error('平日／休日ブロックが見つかりませんでした。5行目に「平日」「休日」、6行目に「印・カテゴリー名・PI値・指数」が並ぶレイアウトのシートを指定してください。');
+    const best = mapped.sort((a, b) => b.rows.length - a.rows.length)[0];
+    const withVals = best.rows.filter(r => r.pi != null || r.idx != null).length;
+    load(finalize({ source: file.name, sample: false, region: best.region, weeks: best.weeks, rows: best.rows }));
+    flash(best.weeks.length + '週 ／ ' + best.rows.length.toLocaleString('ja-JP') + '行を読み込みました。'
+      + (withVals ? '数値入力済み ' + withVals.toLocaleString('ja-JP') + '行。' : 'PI値・指数が未入力のため、グラフは空になります。'), false);
+  } catch (err) {
+    $('#loaderTitle').textContent = '読み込みに失敗しました';
+    flash(err && err.message ? err.message : String(err));
+  }
+}
+function boot() {
+  seg('#fDay', v => { S.day = v; S.picked = new Set(); autoPick(); renderAll(); });
+  seg('#trendMeasure', v => { S.measure = v; renderTrend(); });
+  seg('#trendMode', v => { S.trendMode = v; renderTrend(); });
+  seg('#rankMode', v => { S.rankMode = v; renderRank(); });
+  seg('#heatMode', v => { S.heatMode = v; renderHeat(); });
+  seg('#heatAxis', v => { S.heatAxis = v; renderHeat(); });
+  $('#fSeg').addEventListener('change', e => { S.seg = e.target.value; S.picked = new Set(); autoPick(); renderAll(); });
+  $('#fMajor').addEventListener('change', e => { S.major = e.target.value; S.picked = new Set(); autoPick(); renderAll(); });
+  $('#fStar').addEventListener('change', e => { S.star = e.target.checked; S.picked = new Set(); autoPick(); renderAll(); });
+  $('#fHoli').addEventListener('change', e => { S.holi = e.target.checked; S.picked = new Set(); autoPick(); renderAll(); });
+  $('#fFrom').addEventListener('change', e => { S.from = clamp(+e.target.value, 0, S.to); e.target.value = S.from; renderAll(); });
+  $('#fTo').addEventListener('change', e => { S.to = clamp(+e.target.value, S.from, DS.n - 1); e.target.value = S.to; if (S.rankWeek > S.to || S.rankWeek < S.from) { S.rankWeek = S.to; $('#rankWeek').value = S.to; } renderAll(); });
+  $('#rankWeek').addEventListener('change', e => { S.rankWeek = +e.target.value; renderRank(); });
+  $('#rankN').addEventListener('change', e => { S.rankN = +e.target.value; renderRank(); });
+  $('#catSearch').addEventListener('input', e => { S.search = e.target.value; renderPicker(); });
+  $('#catSort').addEventListener('change', e => { S.catSort = e.target.value; renderPicker(); });
+  $('#pickTop').addEventListener('click', () => { autoPick(); renderPicker(); renderTrend(); });
+  $('#pickClear').addEventListener('click', () => { S.picked = new Set(); renderPicker(); renderTrend(); });
+  $('#tblWeek').addEventListener('change', e => { S.tblWeek = +e.target.value; renderTable(); });
+  $('#tblSearch').addEventListener('input', e => { S.tblSearch = e.target.value; renderTable(); });
+  $('#copyCsv').addEventListener('click', async () => {
+    const txt = csvText();
+    try { await navigator.clipboard.writeText(txt); flash('CSV ' + (txt.split('\r\n').length - 1).toLocaleString('ja-JP') + '行をクリップボードにコピーしました。Excelに貼り付けてご利用ください。', false); }
+    catch (_) {
+      const ta = mk('textarea'); ta.value = txt;
+      ta.style.cssText = 'position:fixed;left:8px;top:8px;width:60vw;height:40vh;z-index:99';
+      document.body.appendChild(ta); ta.select();
+      flash('自動コピーが使えない環境でした。表示されたテキストを選択してコピーしてください（クリックで閉じます）。');
+      ta.addEventListener('blur', () => ta.remove(), { once: true });
+    }
+  });
+  $('#tabs').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setView(b.dataset.v); });
+  $('#pickBtn').addEventListener('click', () => $('#fileInput').click());
+  $('#pickBtn2').addEventListener('click', () => $('#fileInput').click());
+  $('#demoBtn').addEventListener('click', () => { load(buildSample(104)); flash('サンプル数値に戻しました。', false); });
+  $('#fileInput').addEventListener('change', e => { const f = e.target.files && e.target.files[0]; if (f) openFile(f); e.target.value = ''; });
+  const dz = $('#loader');
+  ['dragenter', 'dragover'].forEach(t => dz.addEventListener(t, e => { e.preventDefault(); dz.classList.add('hot'); }));
+  ['dragleave', 'drop'].forEach(t => dz.addEventListener(t, e => { e.preventDefault(); dz.classList.remove('hot'); }));
+  document.addEventListener('dragover', e => e.preventDefault());
+  document.addEventListener('drop', e => {
+    e.preventDefault();
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) openFile(f);
+  });
+  let rt;
+  const redraw = () => { clearTimeout(rt); rt = setTimeout(renderView, 120); };
+  addEventListener('resize', redraw);
+  const mq = matchMedia('(prefers-color-scheme: dark)');
+  mq.addEventListener && mq.addEventListener('change', redraw);
+  new MutationObserver(redraw).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  load(buildSample(104));
+  setView('trend');
+}
+boot();
+})();
+</script>
+</body>
+</html>
