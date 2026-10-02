@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""ダミーの既存5店舗＋新店1店を生成する。
+"""ダミーデータの生成（既存5店＋新店1店、低温ディビジョンの週次IDPOS）。
 
-実データが来るまでの動作確認用。値は実在の店舗のものではないが、
-商圏レポートの実物（自転車10分圏・都市部住宅地）の水準に合わせてある。
-売上構成比は「商圏変数に反応する」ように作ってあるので、方向性分析が
+実データと同じ形式で出す。
+  - 商圏マスタ   : store_master.csv / new_store.csv
+  - IDPOS       : idpos_sample.csv.gz      （年週 × 店舗 × 階層 × 顧客種類 × 年代）
+  - 粗利        : ure_zaiko_sample.csv.gz  （年週 × 店舗 × 階層）
+文字コードはcp932、年週の表記も実データに合わせて2種類にしてある。
+
+売上は商圏変数に反応するように作ってあるので、方向性分析とLOO検証が
 意味のある出力を返すことを確認できる。
 """
 
@@ -15,14 +19,17 @@ import pandas as pd
 OUT = Path(__file__).resolve().parent
 rng = np.random.default_rng(20251002)
 
-# store_id, 店名, タイプ
+N_WEEKS = 52
+START_YEAR, START_WEEK = 2025, 40
+
+# ---------------------------------------------------------------- 店舗
 STORES = [
-    # 都市部4店
-    dict(store_id="S01", store_name="都心A店（住宅地・単身多）", kind="urban_single",
+    dict(store_id="0101", store_name="都心A店", kind="urban_single",
          pop_total=204_382, pop_density=14_800, hh_total=109_917, hh_avg_size=1.86,
          age_share_0_14=0.113, age_share_15_29=0.216, age_share_30_44=0.237,
          age_share_45_64=0.269, age_share_65plus=0.166,
-         age_cmp_15_29=0.216, age_cmp_30_49=0.33, age_cmp_50_69=0.267, age_cmp_70plus=0.074,
+         age_dec_0s=0.077, age_dec_10s=0.080, age_dec_20s=0.172, age_dec_30s=0.158,
+         age_dec_40s=0.166, age_dec_50s=0.138, age_dec_60s=0.087, age_dec_70plus=0.122,
          hh_share_single=0.553, hh_share_with_child=0.069, hh_share_senior=0.204,
          housing_share_owned=0.337, housing_share_rent=0.564, housing_share_apart=0.806,
          hh_income_avg=556, income_share_u300=0.275, income_share_700p=0.251,
@@ -36,13 +43,14 @@ STORES = [
          fac_school=6, fac_nursery=14, fac_university=2, fac_hospital=5, fac_clinic=95,
          fac_factory=3, fac_office_workers=44_370, fac_apartment_units=88_500,
          sales_floor_sqm=980, fresh_strength=3, deli_strength=4, price_level=3,
-         pb_ratio=0.11, store_format="都市型SM"),
+         pb_ratio=0.11, store_format="都市型SM", weekly_customers=26_000),
 
-    dict(store_id="S02", store_name="駅前B店（オフィス・繁華街）", kind="urban_office",
+    dict(store_id="0102", store_name="駅前B店", kind="urban_office",
          pop_total=98_400, pop_density=18_200, hh_total=62_100, hh_avg_size=1.58,
          age_share_0_14=0.072, age_share_15_29=0.268, age_share_30_44=0.271,
          age_share_45_64=0.250, age_share_65plus=0.139,
-         age_cmp_15_29=0.268, age_cmp_30_49=0.351, age_cmp_50_69=0.249, age_cmp_70plus=0.06,
+         age_dec_0s=0.049, age_dec_10s=0.063, age_dec_20s=0.228, age_dec_30s=0.178,
+         age_dec_40s=0.173, age_dec_50s=0.141, age_dec_60s=0.088, age_dec_70plus=0.080,
          hh_share_single=0.655, hh_share_with_child=0.041, hh_share_senior=0.152,
          housing_share_owned=0.241, housing_share_rent=0.672, housing_share_apart=0.905,
          hh_income_avg=612, income_share_u300=0.248, income_share_700p=0.311,
@@ -56,13 +64,14 @@ STORES = [
          fac_school=3, fac_nursery=8, fac_university=4, fac_hospital=3, fac_clinic=138,
          fac_factory=1, fac_office_workers=121_400, fac_apartment_units=52_300,
          sales_floor_sqm=620, fresh_strength=2, deli_strength=5, price_level=4,
-         pb_ratio=0.08, store_format="駅前小型SM"),
+         pb_ratio=0.08, store_format="駅前小型SM", weekly_customers=31_000),
 
-    dict(store_id="S03", store_name="住宅街C店（子育てファミリー）", kind="urban_family",
+    dict(store_id="0103", store_name="住宅街C店", kind="urban_family",
          pop_total=142_600, pop_density=9_400, hh_total=58_900, hh_avg_size=2.42,
          age_share_0_14=0.148, age_share_15_29=0.166, age_share_30_44=0.248,
          age_share_45_64=0.277, age_share_65plus=0.161,
-         age_cmp_15_29=0.166, age_cmp_30_49=0.33, age_cmp_50_69=0.288, age_cmp_70plus=0.068,
+         age_dec_0s=0.098, age_dec_10s=0.096, age_dec_20s=0.120, age_dec_30s=0.152,
+         age_dec_40s=0.178, age_dec_50s=0.154, age_dec_60s=0.104, age_dec_70plus=0.098,
          hh_share_single=0.338, hh_share_with_child=0.138, hh_share_senior=0.228,
          housing_share_owned=0.586, housing_share_rent=0.332, housing_share_apart=0.552,
          hh_income_avg=681, income_share_u300=0.182, income_share_700p=0.372,
@@ -76,13 +85,14 @@ STORES = [
          fac_school=11, fac_nursery=22, fac_university=1, fac_hospital=4, fac_clinic=62,
          fac_factory=6, fac_office_workers=38_200, fac_apartment_units=31_400,
          sales_floor_sqm=1_380, fresh_strength=4, deli_strength=3, price_level=3,
-         pb_ratio=0.14, store_format="郊外型SM（市街地）"),
+         pb_ratio=0.14, store_format="郊外型SM（市街地）", weekly_customers=24_000),
 
-    dict(store_id="S04", store_name="旧市街D店（高齢・徒歩）", kind="urban_senior",
+    dict(store_id="0104", store_name="旧市街D店", kind="urban_senior",
          pop_total=88_200, pop_density=11_100, hh_total=44_600, hh_avg_size=1.98,
          age_share_0_14=0.089, age_share_15_29=0.151, age_share_30_44=0.196,
          age_share_45_64=0.284, age_share_65plus=0.280,
-         age_cmp_15_29=0.151, age_cmp_30_49=0.258, age_cmp_50_69=0.312, age_cmp_70plus=0.131,
+         age_dec_0s=0.058, age_dec_10s=0.062, age_dec_20s=0.120, age_dec_30s=0.108,
+         age_dec_40s=0.140, age_dec_50s=0.158, age_dec_60s=0.139, age_dec_70plus=0.215,
          hh_share_single=0.452, hh_share_with_child=0.052, hh_share_senior=0.361,
          housing_share_owned=0.512, housing_share_rent=0.401, housing_share_apart=0.631,
          hh_income_avg=448, income_share_u300=0.372, income_share_700p=0.168,
@@ -96,14 +106,14 @@ STORES = [
          fac_school=5, fac_nursery=9, fac_university=0, fac_hospital=6, fac_clinic=88,
          fac_factory=9, fac_office_workers=26_100, fac_apartment_units=24_800,
          sales_floor_sqm=860, fresh_strength=4, deli_strength=3, price_level=2,
-         pb_ratio=0.17, store_format="都市型SM"),
+         pb_ratio=0.17, store_format="都市型SM", weekly_customers=18_000),
 
-    # 郊外1店
-    dict(store_id="S05", store_name="郊外E店（車商圏）", kind="rural_car",
+    dict(store_id="0105", store_name="郊外E店", kind="rural_car",
          pop_total=46_300, pop_density=1_850, hh_total=17_200, hh_avg_size=2.69,
          age_share_0_14=0.132, age_share_15_29=0.138, age_share_30_44=0.213,
          age_share_45_64=0.288, age_share_65plus=0.229,
-         age_cmp_15_29=0.138, age_cmp_30_49=0.284, age_cmp_50_69=0.322, age_cmp_70plus=0.124,
+         age_dec_0s=0.086, age_dec_10s=0.084, age_dec_20s=0.098, age_dec_30s=0.128,
+         age_dec_40s=0.158, age_dec_50s=0.160, age_dec_60s=0.126, age_dec_70plus=0.160,
          hh_share_single=0.221, hh_share_with_child=0.112, hh_share_senior=0.342,
          housing_share_owned=0.781, housing_share_rent=0.158, housing_share_apart=0.214,
          hh_income_avg=524, income_share_u300=0.244, income_share_700p=0.238,
@@ -117,15 +127,16 @@ STORES = [
          fac_school=4, fac_nursery=6, fac_university=0, fac_hospital=2, fac_clinic=21,
          fac_factory=18, fac_office_workers=14_700, fac_apartment_units=3_900,
          sales_floor_sqm=1_950, fresh_strength=5, deli_strength=3, price_level=2,
-         pb_ratio=0.19, store_format="郊外型SM"),
+         pb_ratio=0.19, store_format="郊外型SM", weekly_customers=15_000),
 ]
 
 NEW_STORE = dict(
-    store_id="NEW01", store_name="新店（仮称）○○店", kind="new",
+    store_id="0199", store_name="新店（仮称）○○店", kind="new",
     pop_total=168_900, pop_density=12_300, hh_total=81_400, hh_avg_size=2.07,
     age_share_0_14=0.124, age_share_15_29=0.198, age_share_30_44=0.251,
     age_share_45_64=0.265, age_share_65plus=0.162,
-    age_cmp_15_29=0.198, age_cmp_30_49=0.334, age_cmp_50_69=0.283, age_cmp_70plus=0.072,
+    age_dec_0s=0.082, age_dec_10s=0.080, age_dec_20s=0.156, age_dec_30s=0.148,
+    age_dec_40s=0.170, age_dec_50s=0.150, age_dec_60s=0.098, age_dec_70plus=0.116,
     hh_share_single=0.448, hh_share_with_child=0.098, hh_share_senior=0.211,
     housing_share_owned=0.431, housing_share_rent=0.478, housing_share_apart=0.712,
     hh_income_avg=598, income_share_u300=0.231, income_share_700p=0.289,
@@ -139,108 +150,189 @@ NEW_STORE = dict(
     fac_school=8, fac_nursery=17, fac_university=1, fac_hospital=4, fac_clinic=79,
     fac_factory=5, fac_office_workers=47_800, fac_apartment_units=61_200,
     sales_floor_sqm=1_120, fresh_strength=4, deli_strength=4, price_level=3,
-    pb_ratio=0.13, store_format="都市型SM",
+    pb_ratio=0.13, store_format="都市型SM", weekly_customers=22_000,
 )
 
-# ---------------- カテゴリ別売上構成比 ----------------
-# base: 既存店の平均的な構成比
-# drivers: 商圏変数が標準偏差1つ分動いたときの構成比の変化（pt）
-CATEGORIES = [
-    # (大分類, カテゴリ, base%, {driver: pt/sd})
-    ("生鮮", "青果",       12.8, {"hh_share_with_child": 0.9, "day_night_ratio": -0.8, "share_car": 0.6}),
-    ("生鮮", "精肉",        9.6, {"hh_share_with_child": 1.0, "hh_share_single": -0.9}),
-    ("生鮮", "鮮魚",        6.9, {"age_share_65plus": 1.2, "hh_share_single": -0.7}),
-    ("惣菜", "惣菜・弁当",  11.4, {"hh_share_single": 1.6, "day_night_ratio": 1.1, "hh_share_with_child": -0.6}),
-    ("惣菜", "ベーカリー",   3.1, {"day_night_ratio": 0.4, "hh_share_with_child": 0.3}),
-    ("日配", "牛乳・乳製品", 5.2, {"hh_share_with_child": 0.8, "age_share_65plus": -0.3}),
-    ("日配", "和日配",       4.4, {"age_share_65plus": 0.9, "hh_share_single": -0.4}),
-    ("日配", "洋日配",       3.3, {"hh_share_single": 0.4, "hh_share_with_child": 0.3}),
-    ("日配", "冷凍食品",     4.6, {"hh_share_single": 1.1, "share_car": 0.4}),
-    ("グロサリー", "米・麺",  4.1, {"share_car": 1.0, "hh_share_single": -0.8}),
-    ("グロサリー", "調味料",  3.8, {"hh_share_with_child": 0.5, "hh_share_single": -0.5}),
-    ("グロサリー", "加工食品", 6.2, {"share_car": 0.6, "hh_share_with_child": 0.4}),
-    ("グロサリー", "菓子",    5.7, {"hh_share_with_child": 1.1, "age_share_65plus": -0.8}),
-    ("飲料・酒", "飲料",      7.3, {"day_night_ratio": 0.9, "share_car": 0.8}),
-    ("飲料・酒", "酒類",      5.1, {"day_night_ratio": 1.0, "hh_share_single": 0.7, "age_share_65plus": -0.4}),
-    ("非食品", "日用品",      4.2, {"share_car": 1.1, "hh_share_with_child": 0.4}),
-    ("非食品", "ヘルス＆ビューティ", 1.8, {"hh_share_single": 0.4, "comp_drug_1km": -0.5}),
-    ("非食品", "その他非食品", 0.5, {}),
+# ---------------------------------------------------------------- 低温の階層
+# (ライン, 部門, カテゴリー, [サブカテゴリー], 基準PI(円/客), 基準粗利率, ドライバ, 主購買年代)
+HIER = [
+    ("和日配", "日配和", "納豆",     ["小粒", "ひきわり"],       11.0, 0.262,
+     {"age_dec_60s": 0.9, "age_dec_70plus": 0.8, "hh_share_single": -0.5}, [50, 60, 70]),
+    ("和日配", "日配和", "豆腐",     ["充填", "もめん・絹"],     14.5, 0.248,
+     {"age_dec_70plus": 1.0, "hh_share_senior": 0.7}, [50, 60, 70]),
+    ("和日配", "日配和", "練物",     ["ちくわ", "かまぼこ"],      8.2, 0.291,
+     {"age_dec_70plus": 1.2, "hh_avg_size": 0.4}, [60, 70]),
+    ("洋日配", "日配飲料", "牛乳",   ["ホームユース", "パーソナル"], 22.0, 0.218,
+     {"hh_share_with_child": 1.1, "age_dec_30s": 0.6}, [30, 40, 50]),
+    ("洋日配", "日配洋", "ヨーグルト", ["プレーン", "小型カップ"], 18.5, 0.254,
+     {"hh_share_with_child": 0.8, "age_dec_40s": 0.5}, [30, 40, 50]),
+    ("洋日配", "日配洋", "デザート", ["プリン", "ゼリー"],       9.8, 0.301,
+     {"age_dec_20s": 0.7, "hh_share_single": 0.6}, [20, 30, 40]),
+    ("フローズン", "冷凍食品", "冷凍麺", ["うどん", "パスタ"],    13.2, 0.276,
+     {"hh_share_single": 1.2, "share_car": 0.5}, [20, 30, 40]),
+    ("フローズン", "冷凍食品", "冷凍米飯", ["炒飯", "おにぎり"],   9.4, 0.288,
+     {"hh_share_single": 1.0, "day_night_ratio": 0.6}, [20, 30, 40]),
+    ("フローズン", "冷凍食品", "アイス", ["マルチ", "パーソナル"], 15.6, 0.312,
+     {"hh_share_with_child": 0.7, "age_dec_20s": 0.5}, [20, 30, 40]),
+    ("精肉", "精肉", "牛肉",         ["国産", "輸入"],          28.0, 0.242,
+     {"hh_income_avg": 1.0, "hh_share_with_child": 0.6}, [40, 50, 60]),
+    ("精肉", "精肉", "豚肉",         ["こま・切落し", "ブロック"], 32.5, 0.268,
+     {"hh_avg_size": 1.2, "hh_share_with_child": 0.8}, [40, 50, 60]),
+    ("精肉", "精肉", "鶏肉",         ["もも", "むね・ささみ"],    21.0, 0.284,
+     {"hh_avg_size": 0.9, "age_dec_30s": 0.4}, [30, 40, 50]),
+    ("パン", "パン", "食パン",       ["角食", "山食"],          16.8, 0.332,
+     {"day_night_ratio": 0.5, "hh_share_with_child": 0.6}, [30, 40, 50, 60]),
+    ("パン", "パン", "菓子パン",     ["菓子パン", "蒸しパン"],    19.4, 0.368,
+     {"age_dec_20s": 0.8, "worker_pop": 0.6}, [20, 30, 40]),
+    ("パン", "パン", "惣菜パン",     ["調理パン", "サンド"],      12.1, 0.392,
+     {"day_night_ratio": 1.1, "hh_share_single": 0.7}, [20, 30, 40]),
 ]
 
-MARGIN = {  # 粗利率の基準値
-    "青果": 0.305, "精肉": 0.288, "鮮魚": 0.265, "惣菜・弁当": 0.415, "ベーカリー": 0.395,
-    "牛乳・乳製品": 0.218, "和日配": 0.252, "洋日配": 0.271, "冷凍食品": 0.284,
-    "米・麺": 0.172, "調味料": 0.246, "加工食品": 0.231, "菓子": 0.258,
-    "飲料": 0.205, "酒類": 0.168, "日用品": 0.221, "ヘルス＆ビューティ": 0.312,
-    "その他非食品": 0.335,
-}
-
 AGE_BANDS = ["10代", "20代", "30代", "40代", "50代", "60代", "70代以上"]
-# 会員構成比の作り方: 商圏年齢構成に、店タイプごとの来店バイアスをかける
-MEMBER_BASE = {
-    "urban_single": [0.02, 0.19, 0.24, 0.20, 0.16, 0.12, 0.07],
-    "urban_office": [0.03, 0.25, 0.26, 0.19, 0.14, 0.09, 0.04],
-    "urban_family": [0.03, 0.11, 0.22, 0.23, 0.18, 0.14, 0.09],
-    "urban_senior": [0.02, 0.08, 0.13, 0.17, 0.20, 0.21, 0.19],
-    "rural_car":    [0.02, 0.09, 0.16, 0.20, 0.20, 0.18, 0.15],
-}
+AGE_KEY = {"10代": "age_dec_10s", "20代": "age_dec_20s", "30代": "age_dec_30s",
+           "40代": "age_dec_40s", "50代": "age_dec_50s", "60代": "age_dec_60s",
+           "70代以上": "age_dec_70plus"}
+# 来店バイアス: 商圏にいる人がそのまま来るわけではない（若年は来にくい）
+VISIT_BIAS = {"10代": 0.25, "20代": 0.70, "30代": 1.15, "40代": 1.30,
+              "50代": 1.25, "60代": 1.15, "70代以上": 0.95}
+# 月別の季節指数（低温ディビジョン共通の素）
+SEASON = {1: 1.04, 2: 0.97, 3: 1.00, 4: 0.98, 5: 1.00, 6: 1.01,
+          7: 1.06, 8: 1.08, 9: 1.00, 10: 0.98, 11: 1.00, 12: 1.12}
+SEASON_CAT = {"アイス": {7: 1.55, 8: 1.62, 6: 1.30, 9: 1.15, 1: 0.62, 2: 0.60, 12: 0.70},
+              "冷凍麺": {7: 1.22, 8: 1.25, 1: 0.95},
+              "豆腐": {12: 1.20, 1: 1.12, 7: 1.08}}
+
+
+def year_weeks(n: int) -> list[tuple[int, int]]:
+    out, y, w = [], START_YEAR, START_WEEK
+    for _ in range(n):
+        out.append((y, w))
+        w += 1
+        if w > 52:
+            w, y = 1, y + 1
+    return out
+
+
+def month_of(y: int, w: int) -> int:
+    import datetime as dt
+    try:
+        return dt.date.fromisocalendar(y, min(w, 52), 1).month
+    except ValueError:
+        return 1
+
+
+def zscores(stores: list[dict], keys: list[str]) -> pd.DataFrame:
+    df = pd.DataFrame(stores)[keys].astype(float)
+    return (df - df.mean()) / df.std(ddof=1)
 
 
 def main() -> None:
-    master = pd.DataFrame(STORES).drop(columns=["kind"])
-    master["day_night_ratio"] = (
-        pd.DataFrame(STORES)["daytime_pop"] / pd.DataFrame(STORES)["nighttime_pop"]
-    ).round(4)
-    new = pd.DataFrame([NEW_STORE]).drop(columns=["kind"])
-    new["day_night_ratio"] = round(NEW_STORE["daytime_pop"] / NEW_STORE["nighttime_pop"], 4)
+    # 派生変数はここで先に足しておく（ドライバに使うため）
+    for st in STORES + [NEW_STORE]:
+        st["day_night_ratio"] = st["daytime_pop"] / st["nighttime_pop"]
+    drivers = sorted({d for *_, dd, _ in HIER for d in dd})
+    z = zscores(STORES, drivers)
+    # 新店は既存5店の平均・SDで標準化する
+    base = pd.DataFrame(STORES)[drivers].astype(float)
+    z_new = (pd.Series({k: NEW_STORE[k] for k in drivers}, dtype=float)
+             - base.mean()) / base.std(ddof=1)
 
-    cols = list(master.columns)
+    master = pd.DataFrame(STORES).drop(columns=["kind", "weekly_customers"])
+    new = pd.DataFrame([NEW_STORE]).drop(columns=["kind", "weekly_customers"])
     master.to_csv(OUT / "store_master.csv", index=False, encoding="utf-8-sig")
-    new[cols].to_csv(OUT / "new_store.csv", index=False, encoding="utf-8-sig")
+    new[list(master.columns)].to_csv(OUT / "new_store.csv", index=False, encoding="utf-8-sig")
 
-    # 売上構成比: base + Σ(係数 × 標準化した商圏変数) + 微小ノイズ
-    drivers = sorted({d for _, _, _, dd in CATEGORIES for d in dd})
-    z = master[drivers].astype(float)
-    z = (z - z.mean()) / z.std(ddof=1)
+    yws = year_weeks(N_WEEKS)
+    pi_rows, mg_rows = [], []
 
-    rows = []
-    for i, store in enumerate(STORES):
-        raw = {}
-        for major, cat, base, dd in CATEGORIES:
-            val = base + sum(coef * float(z.iloc[i][d]) for d, coef in dd.items())
-            raw[cat] = max(val + rng.normal(0, 0.12), 0.2)
-        total = sum(raw.values())
-        for major, cat, base, dd in CATEGORIES:
-            share = raw[cat] / total
-            margin = MARGIN[cat] + rng.normal(0, 0.008)
-            sales = share * (store["pop_total"] * 1_900)  # ダミーの年商
-            rows.append({
-                "store_id": store["store_id"], "category_major": major, "category": cat,
-                "sales_share": round(share, 5),
-                "gross_margin_rate": round(margin, 4),
-                "sales_amount": int(sales),
-                "gross_profit": int(sales * margin),
-            })
-    pd.DataFrame(rows).to_csv(OUT / "sales_mix.csv", index=False, encoding="utf-8-sig")
+    def emit(store: dict, zrow, yws_, store_idx: int | None):
+        cust = store["weekly_customers"]
+        for li, (line, dept, cat, subs, base_pi, base_gm, dd, _ages) in enumerate(HIER):
+            # 商圏によるこの店の水準（既存店は z、新店は z_new）
+            mult = 1.0 + sum(coef * float(zrow[d]) for d, coef in dd.items()) * 0.12
+            mult = max(mult, 0.35)
+            gm_store = base_gm * (1 + 0.04 * float(zrow.get("hh_income_avg", 0.0)))
+            # 年代構成（商圏 × 来店バイアス）
+            w = np.array([max(store[AGE_KEY[b]], 1e-6) * VISIT_BIAS[b] for b in AGE_BANDS])
+            w = w / w.sum()
+            for si, sub in enumerate(subs):
+                share = 0.62 if si == 0 else 0.38
+                for (y, wk) in yws_:
+                    m = month_of(y, wk)
+                    s = SEASON[m] * SEASON_CAT.get(cat, {}).get(m, 1.0)
+                    noise = rng.normal(1.0, 0.055)
+                    pi_total = base_pi * share * mult * s * noise
+                    sales_total = pi_total * cust
+                    # 年代別に割る（若干の週次ゆらぎを足す）
+                    wk_w = w * rng.normal(1.0, 0.04, size=len(w))
+                    wk_w = np.clip(wk_w, 1e-6, None)
+                    wk_w = wk_w / wk_w.sum()
+                    for b, ww in zip(AGE_BANDS, wk_w):
+                        pi_rows.append((
+                            f"{y}{wk:02d}", "0077", "STリテール", "0306", "ST第一",
+                            "0445", "ST第一", store["store_id"], store["store_name"],
+                            "0011", "第三事業部", "0054", "低温",
+                            f"{li:04d}", line, f"{li:04d}", dept,
+                            f"{li:04d}{si}", cat, f"{si:04d}", sub,
+                            "会員", b,
+                            int(round(sales_total * ww)), round(pi_total * ww, 2),
+                        ))
+                    # 非会員（年代不明）
+                    pi_rows.append((
+                        f"{y}{wk:02d}", "0077", "STリテール", "0306", "ST第一",
+                        "0445", "ST第一", store["store_id"], store["store_name"],
+                        "0011", "第三事業部", "0054", "低温",
+                        f"{li:04d}", line, f"{li:04d}", dept,
+                        f"{li:04d}{si}", cat, f"{si:04d}", sub,
+                        "非会員", "不明",
+                        int(round(sales_total * 0.22)), round(pi_total * 0.22, 2),
+                    ))
+                    gm = np.clip(gm_store * rng.normal(1.0, 0.035), 0.05, 0.60)
+                    gp_sen = sales_total * 1.22 * gm / 1000   # 千円
+                    mg_rows.append((
+                        f"{y}年{wk}週", "0077", "STリテール", "0306", "ST第一",
+                        store["store_id"], store["store_name"],
+                        "0054", "低温", f"{li:04d}", line, f"{li:04d}", dept,
+                        f"{li:04d}{si}", cat, f"{si:04d}", sub,
+                        round(gp_sen, 1), f"{gm * 100:.2f}%",
+                    ))
 
-    # 会員構成比（男女×年代）
-    mrows = []
-    for store in STORES:
-        base = np.array(MEMBER_BASE[store["kind"]], dtype=float)
-        base = base / base.sum()
-        female_bias = 0.62 if store["kind"] != "urban_office" else 0.54
-        for g, gshare in (("女", female_bias), ("男", 1 - female_bias)):
-            tilt = 1.0 if g == "女" else 0.92
-            vals = base * np.array([tilt ** k for k in range(len(base))])
-            vals = vals / vals.sum() * gshare
-            for band, v in zip(AGE_BANDS, vals):
-                mrows.append({"store_id": store["store_id"], "gender": g,
-                              "age_band": band, "member_share": round(float(v), 5)})
-    pd.DataFrame(mrows).to_csv(OUT / "member_mix.csv", index=False, encoding="utf-8-sig")
+    for i, st in enumerate(STORES):
+        emit(st, z.iloc[i], yws, i)
+    # 新店は直近12週だけ（開店したて）。答え合わせの動作確認用。
+    emit(NEW_STORE, z_new, yws[-12:], None)
+
+    pi_cols = ["年週", "ゾーンCD", "ゾーン", "エリアCD", "エリア", "チームCD", "チーム",
+               "店舗CD", "店舗", "事業部CD", "事業部", "ディビジョンCD", "ディビジョン",
+               "ラインCD", "ライン", "部門CD", "部門", "カテゴリーCD", "カテゴリー",
+               "サブカテゴリーCD", "サブカテゴリー", "顧客種類", "年代",
+               "売上税抜金額(円)", "PI値"]
+    mg_cols = ["年週", "ゾーンCD", "ゾーン名", "エリアCD", "エリア名", "店舗CD", "店舗名",
+               "ディビジョンCD", "ディビジョン名", "ラインCD", "ライン名",
+               "部門CD", "部門名", "カテゴリーCD", "カテゴリー名",
+               "サブカテゴリーCD", "サブカテゴリー名", "販売荒利高(千円)", "販売荒利率"]
+
+    pi_df = pd.DataFrame(pi_rows, columns=pi_cols)
+    mg_df = pd.DataFrame(mg_rows, columns=mg_cols)
+
+    # 既存店分と新店分を分けて出す（新店は答え合わせ用）
+    existing = pi_df[pi_df["店舗CD"] != NEW_STORE["store_id"]]
+    newonly = pi_df[pi_df["店舗CD"] == NEW_STORE["store_id"]]
+    existing.to_csv(OUT / "idpos_sample.csv.gz", index=False, encoding="cp932")
+    newonly.to_csv(OUT / "idpos_newstore_actual.csv.gz", index=False, encoding="cp932")
+
+    mg_ex = mg_df[mg_df["店舗CD"] != NEW_STORE["store_id"]]
+    mg_new = mg_df[mg_df["店舗CD"] == NEW_STORE["store_id"]]
+    mg_ex.to_csv(OUT / "ure_zaiko_sample.csv.gz", index=False, encoding="cp932")
+    mg_new.to_csv(OUT / "ure_zaiko_newstore_actual.csv.gz", index=False, encoding="cp932")
 
     print("生成しました:")
-    for f in ("store_master.csv", "new_store.csv", "sales_mix.csv", "member_mix.csv"):
-        print("  ", OUT / f)
+    for f, n in (("store_master.csv", len(master)), ("new_store.csv", 1),
+                 ("idpos_sample.csv.gz", len(existing)),
+                 ("ure_zaiko_sample.csv.gz", len(mg_ex)),
+                 ("idpos_newstore_actual.csv.gz", len(newonly)),
+                 ("ure_zaiko_newstore_actual.csv.gz", len(mg_new))):
+        print(f"   {OUT / f}  ({n:,}行)")
 
 
 if __name__ == "__main__":

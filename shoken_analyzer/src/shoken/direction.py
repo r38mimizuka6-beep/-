@@ -28,13 +28,13 @@ class DirectionFinding:
     variable: str
     var_label: str
     axis: str | None
-    category: str
+    unit: str          # 分析単位（例 '和日配 > 納豆'）
     direction: str            # 正 / 負
     concordant: int           # 符号が一致したペア数
     total_pairs: int
     n_same_direction: int     # 符号が揃った店舗数
     n_stores: int             # 判定に使えた店舗数
-    median_slope: float       # Δ構成比pt / Δ変数(標準化) の中央値
+    median_slope: float       # 変数1σあたりの相対変化（比率）
     strength: str             # 根拠あり / 参考
     cluster_members: list[str] = field(default_factory=list)  # 同じ動きをする他の変数
 
@@ -93,16 +93,17 @@ def _cluster_variables(
 
 def analyze_directions(
     stores: pd.DataFrame,
-    sales_mix: pd.DataFrame,
+    levels: pd.DataFrame,
     cfg: Config,
     *,
-    min_abs_share_diff: float = 0.005,   # 0.5pt未満の差はノイズ扱い
+    metric_label: str = "",
+    min_rel_diff: float = 0.03,          # 相対3%未満の差はノイズ扱い
     min_pairs: int = 6,
     cluster_threshold: float = 0.95,
 ) -> DirectionResult:
+    """levels: index=store_id, columns=カテゴリー の水準表（IDPOSの集計値）。"""
     id_key = cfg.id_key
-    share = sales_mix.pivot_table(index=id_key, columns="category",
-                                  values="sales_share", aggfunc="sum")
+    share = levels
     ids = [s for s in stores[id_key].astype(str) if s in share.index]
     if len(ids) < 4:
         return DirectionResult([], 0, 0.0, [],
@@ -142,13 +143,14 @@ def analyze_directions(
                 if pd.isna(va) or pd.isna(vb) or pd.isna(sa) or pd.isna(sb):
                     continue
                 dv, ds = (va - vb) / sd, sa - sb
-                if abs(dv) < 1e-9 or abs(ds) < min_abs_share_diff:
+                scale = (abs(sa) + abs(sb)) / 2
+                if abs(dv) < 1e-9 or scale == 0 or abs(ds) / scale < min_rel_diff:
                     continue
                 if dv * ds > 0:
                     pos += 1
                 else:
                     neg += 1
-                slopes.append(ds / dv)
+                slopes.append(ds / dv / scale)   # 変数1σあたりの相対変化
                 used.update((a, b))
 
             total = pos + neg
@@ -180,7 +182,7 @@ def analyze_directions(
 
             findings.append(DirectionFinding(
                 variable=var, var_label=cfg.label(var), axis=cfg.axis_of(var),
-                category=str(cat), direction=direction, concordant=concordant,
+                unit=str(cat), direction=direction, concordant=concordant,
                 total_pairs=total, n_same_direction=same, n_stores=len(used),
                 median_slope=float(np.median(slopes)), strength=strength,
                 cluster_members=[cfg.label(m) for m in members.get(var, [])],
@@ -210,15 +212,13 @@ def analyze_directions(
 
 
 def urban_vs_rural_gaps(
-    stores: pd.DataFrame, sales_mix: pd.DataFrame, cfg: Config, rural_ids: list[str]
+    stores: pd.DataFrame, levels: pd.DataFrame, cfg: Config, rural_ids: list[str]
 ) -> list[dict]:
-    """郊外店と都市部店の構成比差。立地の影響を受けやすいカテゴリの候補。
+    """郊外店と都市部店の水準差。立地の影響を受けやすいカテゴリーの候補。
 
     郊外は1店しかないので、これは仮説の材料であって検証結果ではない。
     """
-    id_key = cfg.id_key
-    share = sales_mix.pivot_table(index=id_key, columns="category",
-                                  values="sales_share", aggfunc="sum")
+    share = levels
     urban_ids = [s for s in share.index if s not in rural_ids]
     rural = [s for s in rural_ids if s in share.index]
     if not rural or len(urban_ids) < 2:
@@ -238,9 +238,9 @@ def urban_vs_rural_gaps(
             "urban_mean": float(u.mean()),
             "urban_min": float(u.min()),
             "urban_max": float(u.max()),
-            "diff_pt": diff * 100,
+            "diff_pt": (diff / u.mean() * 100) if u.mean() else 0.0,
             "inside_urban_range": inside,
-            "note": "都市部4店の範囲内（差は小さい）" if inside else "都市部4店の範囲外（立地差の候補）",
+            "note": "都市部店の範囲内（差は小さい）" if inside else "都市部店の範囲外（立地差の候補）",
         })
     rows.sort(key=lambda d: -abs(d["diff_pt"]))
     return rows

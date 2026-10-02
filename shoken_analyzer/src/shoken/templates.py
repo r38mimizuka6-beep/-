@@ -48,22 +48,7 @@ def write_templates(cfg: Config, out_dir: str | Path, *, with_header_note: bool 
     new.to_csv(p, index=False, encoding="utf-8-sig")
     written.append(p)
 
-    # 3) 売上構成比・粗利（縦持ち）
-    sales = pd.DataFrame(columns=[
-        cfg.id_source, "category_major", "category", "sales_share",
-        "gross_margin_rate", "sales_amount", "gross_profit",
-    ])
-    p = out_dir / "03_sales_mix.csv"
-    sales.to_csv(p, index=False, encoding="utf-8-sig")
-    written.append(p)
-
-    # 4) 会員構成比（縦持ち）
-    member = pd.DataFrame(columns=[cfg.id_source, "gender", "age_band", "member_share"])
-    p = out_dir / "04_member_mix.csv"
-    member.to_csv(p, index=False, encoding="utf-8-sig")
-    written.append(p)
-
-    # 5) 項目の説明書き
+    # 3) 項目の説明書き
     rows = []
     for g in GROUP_ORDER:
         for v in cfg.variables.values():
@@ -113,37 +98,36 @@ def _readme(cfg: Config) -> str:
      のように混ざると、距離計算の結果が意味を持ちません。
 
 ----------------------------------------------------------------
-01_store_master.csv  … 既存店マスタ（1行=1店舗、5行）
-02_new_store.csv     … 新店（1行のみ）
-03_sales_mix.csv     … 店舗×カテゴリの売上構成比・粗利（縦持ち）
-04_member_mix.csv    … 店舗×性別年代の会員構成比（縦持ち）
-00_項目定義.csv      … 各列の意味・取得元・どの軸で使うか
+このツールの入力は3種類です。
+  (1) 商圏マスタ        … 01_store_master.csv / 02_new_store.csv（このテンプレ）
+  (2) 週次IDPOS         … システムからのエクスポートをそのまま使う
+  (3) 週次 売上在庫(粗利) … 同上
+会員の年代構成は (2) に入っているので、別ファイルは不要です。
 ----------------------------------------------------------------
 
-■ 01 / 02 の埋め方
+■ 01_store_master.csv / 02_new_store.csv
+  ・store_id は IDPOS の「店舗CD」と完全に一致させてください（先頭ゼロ含む）。
+    一致しない店舗は予測の材料になりません（レポートに警告が出ます）。
   ・「軸」列に値が入っている項目は類似度計算に直接効きます。最優先で埋めてください。
   ・空欄のままでも動きます。その項目は類似度・範囲チェックから除外され、
     レポートに「未入力」として出ます。
   ・比率(share)は 0〜1 でも 0〜100 でも構いませんが、全店で統一してください。
-  ・商圏レポートのExcelがあるなら、次のコマンドで A（商圏の人）の項目を自動で埋められます:
-        python run_report.py extract --xlsx 店舗A.xlsx 店舗B.xlsx --out master_auto.csv
-    残りの B〜E（アクセス・競合・周辺施設・自店）は手で追記してください。
 
-■ 03_sales_mix.csv
-    store_id, category_major, category, sales_share, gross_margin_rate,
-    sales_amount, gross_profit
-  ・category は全店で同じ名前にしてください（表記ゆれがあると別カテゴリ扱いになります）。
-  ・sales_share は店舗内で合計1.0（または100）になるようにしてください。
-  ・gross_margin_rate は粗利率（0〜1 または 0〜100）。空欄可。
+■ 商圏レポートExcelからの自動入力
+      python run_report.py extract --xlsx 店A.xlsx 店B.xlsx --out master_auto.csv
+  A（商圏の人）の約30項目が自動で埋まります。
 
-■ 04_member_mix.csv
-    store_id, gender, age_band, member_share
-  ・gender は 男/女、age_band は 10代/20代/.../70代以上。
-  ・age_band の区分を変える場合は config/columns.yaml の
-    member_compare_buckets を合わせて直してください。
-  ・member_share は店舗内で合計1.0（または100）。
+■ 検索で埋める項目（B〜E）
+      python run_report.py search-plan --xlsx 店A.xlsx 店B.xlsx --out data/search
+  ファイル名から店舗名を取り出し、「何を調べればよいか」を店舗ごとに書き出します。
+  調べた結果を search_profile.csv に書き込み、report --search で渡してください。
+
+■ 週次IDPOS / 売上在庫
+  システムのエクスポートをそのまま渡せます。文字コード・列名・年週の表記は
+  config/metrics.yaml の idpos セクションで設定します。
+  カテゴリーの表記ゆれは target_categories[].aliases に追記してください。
 
 ■ 実データの列名が違う場合
-  config/columns.yaml の各項目の source: を、実データの列名に書き換えるだけです。
+  config/columns.yaml の各項目の source: を実データの列名に書き換えるだけです。
   コードは触る必要がありません。使わない項目は enabled: false にしてください。
 """

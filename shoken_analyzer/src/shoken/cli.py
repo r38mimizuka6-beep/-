@@ -8,17 +8,20 @@ from pathlib import Path
 
 from .config import Config
 from .io_loader import InputError
+from .metrics_config import MetricsConfig
 from .pipeline import run_analysis
-from .report import write_excel, write_html
+from .report import write_excel, write_html, write_verify_excel, write_verify_html
 from .templates import write_templates
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CONFIG = ROOT / "config" / "columns.yaml"
-DEFAULT_MAP = ROOT / "config" / "extract_shoken_report.yaml"
+CFG = ROOT / "config" / "columns.yaml"
+MCFG = ROOT / "config" / "metrics.yaml"
+MAP = ROOT / "config" / "extract_shoken_report.yaml"
 SAMPLE = ROOT / "data" / "sample"
+LEVEL_CHOICES = ["line", "department", "category", "subcategory"]
 
 
-def _parse_weights(values: list[str] | None) -> dict[str, float]:
+def _weights(values: list[str] | None) -> dict[str, float]:
     out: dict[str, float] = {}
     for v in values or []:
         if "=" not in v:
@@ -34,44 +37,106 @@ def _parse_weights(values: list[str] | None) -> dict[str, float]:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="run_report.py",
-        description="新店の商圏データから類似店判定レポートを出力します。",
+        description="新店の商圏データから、低温カテゴリーの粗利率・PI値・顧客層を予測します。",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""使用例:
   python run_report.py demo
+  python run_report.py demo --level subcategory
   python run_report.py template --out data/templates
-  python run_report.py extract --xlsx 店A.xlsx 店B.xlsx --out master_auto.csv
-  python run_report.py report --master m.csv --new n.csv --sales s.csv --member b.csv \\
-      --weight daynight=2.0 --weight mobility=0.5 --out output/report.html
+  python run_report.py extract --xlsx 商圏/*.xlsx --out data/master_auto.csv
+  python run_report.py search-plan --xlsx 商圏/*.xlsx --out data/search
+  python run_report.py report --master m.csv --new n.csv \\
+      --idpos IDPOS.csv --margin URE_ZAIKO.csv --level category
+  python run_report.py verify --prediction output/predictions_0199.json \\
+      --idpos 新店IDPOS.csv --margin 新店URE_ZAIKO.csv \\
+      --ref-idpos 既存IDPOS.csv --ref-margin 既存URE_ZAIKO.csv
+  python run_report.py weights --master m.csv --idpos IDPOS.csv --margin URE.csv
 """)
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    r = sub.add_parser("report", help="レポートを出力する")
-    r.add_argument("--master", required=True, help="既存店マスタ CSV/Excel")
-    r.add_argument("--new", required=True, help="新店の商圏情報 CSV/Excel（1行）")
-    r.add_argument("--sales", required=True, help="カテゴリ別売上構成比・粗利 CSV")
-    r.add_argument("--member", help="会員の性別年代構成比 CSV（任意）")
-    r.add_argument("--config", default=str(DEFAULT_CONFIG), help="項目定義ファイル")
-    r.add_argument("--out", default="output/report.html", help="HTMLの出力先")
-    r.add_argument("--excel", help="Excelも出す場合の出力先")
-    r.add_argument("--weight", action="append", metavar="軸名=数値",
-                   help="軸の重み（daynight / household / mobility）。複数指定可")
-    r.add_argument("--top", type=int, help="類似店として採用する店舗数（既定2）")
+    def common(x):
+        x.add_argument("--config", default=str(CFG))
+        x.add_argument("--metrics", default=str(MCFG))
+
+    r = sub.add_parser("report", help="予測レポートを出力する")
+    common(r)
+    r.add_argument("--master", required=True, help="既存店の商圏マスタ CSV/Excel")
+    r.add_argument("--new", required=True, help="新店の商圏情報（1行）")
+    r.add_argument("--idpos", required=True, help="既存店の週次IDPOS CSV")
+    r.add_argument("--margin", help="既存店の週次 売上在庫（粗利）CSV")
+    r.add_argument("--search", help="店舗名検索で埋めた search_profile.csv")
+    r.add_argument("--level", choices=LEVEL_CHOICES, help="分析粒度（既定: metrics.yaml の設定）")
+    r.add_argument("--out", default="output/report.html")
+    r.add_argument("--excel", help="Excelの出力先")
+    r.add_argument("--prediction-out", help="予測の保存先JSON（既定: output/predictions_<店舗CD>.json）")
+    r.add_argument("--weight", action="append", metavar="軸名=数値")
+    r.add_argument("--top", type=int, help="類似店として採用する店舗数")
+    r.add_argument("--no-level-scan", action="store_true", help="粒度別精度の計測を省く")
+
+    v = sub.add_parser("verify", help="保存した予測と新店の実績を突き合わせる")
+    common(v)
+    v.add_argument("--prediction", required=True, help="report で保存された予測JSON")
+    v.add_argument("--idpos", required=True, help="新店の週次IDPOS")
+    v.add_argument("--margin", help="新店の週次 売上在庫（粗利）")
+    v.add_argument("--ref-idpos", required=True, help="既存店の週次IDPOS（季節指数を借りる）")
+    v.add_argument("--ref-margin", help="既存店の週次 売上在庫")
+    v.add_argument("--level", choices=LEVEL_CHOICES)
+    v.add_argument("--out", default="output/verify.html")
+    v.add_argument("--excel", help="Excelの出力先")
+
+    w = sub.add_parser("weights", help="軸の重みを振ってLOO誤差の変化を見る")
+    common(w)
+    w.add_argument("--master", required=True)
+    w.add_argument("--idpos", required=True)
+    w.add_argument("--margin")
+    w.add_argument("--level", choices=LEVEL_CHOICES)
 
     t = sub.add_parser("template", help="入力CSVテンプレートを書き出す")
     t.add_argument("--out", default="data/templates")
-    t.add_argument("--config", default=str(DEFAULT_CONFIG))
+    t.add_argument("--config", default=str(CFG))
 
-    e = sub.add_parser("extract", help="商圏レポートExcelから既存店マスタの行を作る")
-    e.add_argument("--xlsx", nargs="+", required=True, help="商圏レポートのブック（1店舗=1ファイル）")
-    e.add_argument("--map", default=str(DEFAULT_MAP), help="抽出マップ")
+    e = sub.add_parser("extract", help="商圏レポートExcelから商圏マスタの行を作る")
+    e.add_argument("--xlsx", nargs="+", required=True)
+    e.add_argument("--map", default=str(MAP))
     e.add_argument("--out", default="data/extracted_master.csv")
-    e.add_argument("--demand-out", help="JICFS中分類別の商圏需要も出す場合の出力先CSV")
+    e.add_argument("--demand-out", help="JICFS中分類別の商圏需要も出す場合の出力先")
 
-    d = sub.add_parser("demo", help="同梱のダミーデータでレポートを出す")
+    s = sub.add_parser("search-plan", help="店舗名から検索すべき項目のひな形を書き出す")
+    s.add_argument("--xlsx", nargs="+", required=True, help="商圏レポート（ファイル名が店舗名）")
+    s.add_argument("--out", default="data/search")
+
+    d = sub.add_parser("demo", help="同梱のダミーデータで一通り動かす")
+    d.add_argument("--level", choices=LEVEL_CHOICES, default="category")
     d.add_argument("--out", default="output/demo_report.html")
     d.add_argument("--excel", default="output/demo_report.xlsx")
     d.add_argument("--weight", action="append", metavar="軸名=数値")
+    d.add_argument("--no-level-scan", action="store_true")
+    d.add_argument("--skip-verify", action="store_true")
     return p
+
+
+def _print_summary(a) -> None:
+    print(f"\n新店: {a.new_name}（{a.new_id}）／ 粒度: {a.idpos.level_label()}"
+          f"（{len(a.idpos.units)}単位）")
+    if a.urban_new.score is not None:
+        print(f"立地判定: {a.urban_new.verdict}（都市度 {a.urban_new.score:.2f}）")
+    print("類似店: " + " / ".join(
+        f"第{p.rank}位 {p.store_name}（類似度{p.similarity:.1f}）" for p in a.peers))
+    if a.loo.mape:
+        import numpy as np
+        for met in a.idpos.metrics:
+            vals = [v for (u, m), v in a.loo.mape.items() if m == met]
+            base = [v for (u, m), v in a.loo.baseline_mape.items() if m == met]
+            if not vals:
+                continue
+            btxt = f" / 全店平均 {np.mean(base):.1f}%" if base else ""
+            print(f"  LOO誤差 {a.mcfg.metric_label(met)}: ±{np.mean(vals):.1f}%{btxt}")
+    risky = [r for r in a.risks if r.level in ("要対策", "警戒")]
+    if risky:
+        print("苦戦予想: " + "、".join(
+            f"{a.idpos.leaf(r.unit)}({r.level})" for r in risky[:8]))
+    for w in a.warnings:
+        print(f"[注意] {w}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -79,8 +144,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.cmd == "template":
-            cfg = Config.load(args.config)
-            for f in write_templates(cfg, args.out):
+            for f in write_templates(Config.load(args.config), args.out):
                 print(f"書き出しました: {f}")
             return 0
 
@@ -88,53 +152,116 @@ def main(argv: list[str] | None = None) -> int:
             from .extract_xlsx import extract_category_demand, extract_many
             df = extract_many(args.xlsx, args.map, args.out)
             print(f"{len(df)}店舗を書き出しました: {args.out}")
-            filled = [c for c in df.columns if df[c].notna().any()]
-            print(f"  値が入った列: {len(filled)} / {len(df.columns)}")
             empty = [c for c in df.columns if df[c].isna().all()]
+            print(f"  値が入った列: {len(df.columns) - len(empty)} / {len(df.columns)}")
             if empty:
-                print("  手入力が必要な列: " + "、".join(empty))
+                print("  検索・手入力が必要な列: " + "、".join(empty))
+                print("  → python run_report.py search-plan --xlsx ... で調査メモを作れます")
             if args.demand_out:
                 dd = extract_category_demand(args.xlsx[0], args.map)
                 Path(args.demand_out).parent.mkdir(parents=True, exist_ok=True)
                 dd.to_csv(args.demand_out, index=False, encoding="utf-8-sig")
-                print(f"商圏カテゴリ需要を書き出しました: {args.demand_out}（{len(dd)}行）")
+                print(f"商圏カテゴリ需要: {args.demand_out}（{len(dd)}行）")
+            return 0
+
+        if args.cmd == "search-plan":
+            from .search_profile import make_search_plan
+            csv_path, md_path, names = make_search_plan(args.xlsx, args.out)
+            print(f"店舗名を{len(names)}件取り出しました: {'、'.join(names)}")
+            print(f"  調査メモ: {md_path}")
+            print(f"  記入用CSV: {csv_path}")
+            print("  調べた結果をCSVに書き込み、report --search で渡してください。")
+            return 0
+
+        if args.cmd == "weights":
+            from .idpos import load_idpos
+            from .io_loader import load_store_master
+            from .predict import weight_sensitivity
+            cfg, mcfg = Config.load(args.config), MetricsConfig.load(args.metrics)
+            stores = load_store_master(args.master, cfg)
+            idpos = load_idpos(args.idpos, args.margin, mcfg, level=args.level)
+            stores = stores[stores[cfg.id_key].astype(str).isin(idpos.store_ids)]
+            df = weight_sensitivity(stores, cfg, idpos, mcfg)
+            print(df.to_string(index=False))
+            spread = df["mean_mape"].max() - df["mean_mape"].min()
+            print(f"\n最良と最悪の差: {spread:.2f}pt")
+            if spread < 1.0:
+                print("誤差の地形はほぼ平坦です。重みを変えても結果は変わりません。"
+                      "既定の等重みのままで構いません。")
+            else:
+                print("重みで差が出ますが、検証点は5店分しかありません。"
+                      "ここで最良の重みを選ぶこと自体が過学習になり得ます。"
+                      "現場の感覚と合う重みを選んでください。")
+            return 0
+
+        if args.cmd == "verify":
+            from .idpos import load_idpos
+            from .verify import verify_predictions
+            mcfg = MetricsConfig.load(args.metrics)
+            actual = load_idpos(args.idpos, args.margin, mcfg, level=args.level)
+            ref = load_idpos(args.ref_idpos, args.ref_margin, mcfg, level=args.level)
+            v = verify_predictions(args.prediction, actual, mcfg, ref)
+            print(f"予実検証: {write_verify_html(v, mcfg, args.out)}")
+            if args.excel:
+                print(f"Excel: {write_verify_excel(v, mcfg, args.excel)}")
+            print(f"\n{v.store_name} / 実績{v.weeks_observed}週"
+                  f"（開店直後{v.excluded_first_weeks}週を除外）")
+            for k, n in v.summary.items():
+                print(f"  {k}: {n}件")
+            for r in v.rows:
+                if r.verdict in ("下振れ", "上振れ"):
+                    print(f"  [{r.verdict}] {r.unit} / {r.metric_label}: "
+                          f"予測 {r.predicted:,.2f} → 実績 {r.actual_adjusted:,.2f}"
+                          f"（{r.diff_pct:+.1f}%）")
+            for w in v.warnings:
+                print(f"[注意] {w}")
             return 0
 
         if args.cmd == "demo":
             a = run_analysis(
-                config_path=DEFAULT_CONFIG,
+                config_path=CFG, metrics_path=MCFG,
                 master_path=SAMPLE / "store_master.csv",
                 new_store_path=SAMPLE / "new_store.csv",
-                sales_path=SAMPLE / "sales_mix.csv",
-                member_path=SAMPLE / "member_mix.csv",
-                weight_overrides=_parse_weights(args.weight),
+                idpos_path=SAMPLE / "idpos_sample.csv.gz",
+                margin_path=SAMPLE / "ure_zaiko_sample.csv.gz",
+                level=args.level,
+                weight_overrides=_weights(args.weight),
+                level_scan=not args.no_level_scan,
             )
         else:
             a = run_analysis(
-                config_path=args.config,
-                master_path=args.master,
-                new_store_path=args.new,
-                sales_path=args.sales,
-                member_path=args.member,
-                weight_overrides=_parse_weights(args.weight),
-                top_n=args.top,
+                config_path=args.config, metrics_path=args.metrics,
+                master_path=args.master, new_store_path=args.new,
+                idpos_path=args.idpos, margin_path=args.margin,
+                search_path=args.search, level=args.level,
+                weight_overrides=_weights(args.weight), top_n=args.top,
+                level_scan=not args.no_level_scan,
             )
     except InputError as e:
         print(f"\n[入力エラー]\n{e}\n", file=sys.stderr)
         return 2
 
-    html_path = write_html(a, args.out)
-    print(f"HTMLレポート: {html_path}")
+    from .verify import save_predictions
+    print(f"HTMLレポート: {write_html(a, args.out)}")
     if getattr(args, "excel", None):
         print(f"Excelレポート: {write_excel(a, args.excel)}")
+    pred_path = (getattr(args, "prediction_out", None)
+                 or f"output/predictions_{a.new_id}.json")
+    save_predictions(a.predictions, store_name=a.new_name, store_id=a.new_id,
+                     path=pred_path, axis_weights=a.similarity.weights,
+                     extra={"level": a.idpos.level, "peers": [p.store_name for p in a.peers]})
+    print(f"予測を保存: {pred_path}（開店後に verify で突き合わせます）")
+    _print_summary(a)
 
-    print(f"\n新店: {a.new_name}")
-    print(f"立地判定: {a.urban_new.verdict}（都市度 {a.urban_new.score:.2f}）"
-          if a.urban_new.score is not None else "立地判定: 判定不能")
-    print("類似店:")
-    for p in a.peers:
-        print(f"  第{p.rank}位 {p.store_name}  類似度 {p.similarity:.1f} / 距離 {p.distance:.3f}")
-    print(f"信頼度: {a.confidence['level']} — {a.confidence['message']}")
-    for w in a.warnings:
-        print(f"[注意] {w}")
+    if args.cmd == "demo" and not getattr(args, "skip_verify", False):
+        from .idpos import load_idpos
+        from .verify import verify_predictions
+        actual = load_idpos(SAMPLE / "idpos_newstore_actual.csv.gz",
+                            SAMPLE / "ure_zaiko_newstore_actual.csv.gz",
+                            a.mcfg, level=a.idpos.level)
+        v = verify_predictions(pred_path, actual, a.mcfg, a.idpos)
+        print(f"\n（デモ）新店の実績12週で答え合わせ: "
+              f"{write_verify_html(v, a.mcfg, 'output/demo_verify.html')}")
+        for k, n in v.summary.items():
+            print(f"  {k}: {n}件")
     return 0

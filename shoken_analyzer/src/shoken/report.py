@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pandas as pd
 
-from .pipeline import Analysis
 
 # ---------------------------------------------------------------- 小道具
 
@@ -100,45 +99,41 @@ details{margin:8px 0}summary{cursor:pointer;font-size:13px;color:var(--accent)}
 """
 
 DISCLAIMER = """
-本レポートは既存5店舗の商圏データと売上実績だけを根拠にした<strong>仮説</strong>です。
-店舗数が変数の数より少ないため、回帰やGBMなどの統計モデルによる「商圏→売上構成比」の
-予測は行っていません。出している数値はすべて
-<strong>(1) 類似店の実績値</strong>、<strong>(2) 店舗間の差の方向</strong>、
-<strong>(3) 既存店の実績レンジ</strong> のいずれかであり、統計的に検定された予測値ではありません。
-開店後のIDPOSによる検証を前提に、初期値の出発点としてお使いください。
+本レポートの数値は<strong>既存店の実績の加重平均</strong>であって、モデルの予測値ではありません。
+店舗数（5店）が商圏変数の数より少ないため、回帰やGBMで「商圏→PI・粗利率」を
+学習することはできません。週次IDPOSが何十週あっても、この点は変わりません
+（週を増やしても店舗数は増えないため）。<br>
+そのかわり、<strong>同じ手順を既存店に1店ずつ当てはめて（LOO検証）、実際にどれだけ外れるか</strong>を
+測っています。本レポートの「正確性」はすべてこの実測誤差です。
+さらに、週次のブレ（変動係数）から<strong>そもそも何%まで当てられるかの上限</strong>も出しています。
 """
 
 
 # ---------------------------------------------------------------- 各セクション
 
-def _sec_summary(a: Analysis) -> str:
+def _sec_summary(a) -> str:
     cfg, u = a.cfg, a.urban_new
     rows = []
     for axis, spec in cfg.axes.items():
         z = a.similarity.new_axis_profile.get(axis)
         w = a.similarity.weights[axis]
-        vars_used = "、".join(cfg.label(k) for k in spec["variables"])
         if z is None:
             reading = "この軸の入力が揃っていません"
         elif z > 0.75:
-            reading = "既存5店の中では明確に高い側"
+            reading = "既存店の中では明確に高い側"
         elif z > 0.25:
             reading = "やや高い側"
         elif z > -0.25:
-            reading = "既存5店の平均付近"
+            reading = "既存店の平均付近"
         elif z > -0.75:
             reading = "やや低い側"
         else:
-            reading = "既存5店の中では明確に低い側"
+            reading = "既存店の中では明確に低い側"
         rows.append(
-            f'<tr><td class="l">{esc(spec["label"])}</td>'
-            f'<td class="l">{_axis_bar(z)}</td>'
-            f'<td class="l">{esc(reading)}</td>'
-            f"<td>{w:.2f}</td>"
-            f'<td class="l muted">{esc(vars_used)}</td></tr>'
+            f'<tr><td class="l">{esc(spec["label"])}</td><td class="l">{_axis_bar(z)}</td>'
+            f'<td class="l">{esc(reading)}</td><td>{w:.2f}</td></tr>'
         )
 
-    ucls = {"都市部寄り": "ok", "中間": "warn", "郊外寄り": "bad"}.get(u.verdict, "warn")
     detail_rows = []
     for d in u.details:
         score = "—" if d["score"] is None else f'{d["score"]:.2f}'
@@ -147,375 +142,547 @@ def _sec_summary(a: Analysis) -> str:
             f'<td>{fnum(d.get("rural_at"), 0)}</td><td>{fnum(d.get("urban_at"), 0)}</td>'
             f'<td>{score}</td><td>{d["weight"]:.1f}</td></tr>'
         )
-    detail = "".join(detail_rows)
 
+    ucls = {"都市部寄り": "ok", "中間": "warn", "郊外寄り": "bad"}.get(u.verdict, "warn")
     rural_n = sum(1 for x in a.urban_stores.values() if x.is_rural)
     urban_n = sum(1 for x in a.urban_stores.values() if x.verdict == "都市部寄り")
 
-    return f"""
-<h2>1. 新店の商圏サマリ</h2>
-<p class="sub">商圏定義: {esc(cfg.trade_area_definition)} ／ 対象: {esc(a.new_name)}</p>
-<div class="cards">
-  <div class="card"><div class="k">都市部／郊外の判定</div>
-    <div class="v"><span class="tag {ucls}">{esc(u.verdict)}</span></div>
-    <div class="muted" style="font-size:11.5px">都市度スコア {fnum(u.score, 2)}（1.00=都市部／0.00=郊外）
-    ・判定に使えた指標 {u.used_rules}/{u.total_rules}</div></div>
-  <div class="card"><div class="k">既存店の内訳</div>
-    <div class="v">都市部 {urban_n} ／ 郊外 {rural_n}</div>
-    <div class="muted" style="font-size:11.5px">全{len(a.stores)}店</div></div>
-  <div class="card"><div class="k">判定の信頼度</div>
-    <div class="v">{esc(a.confidence["level"])}</div>
-    <div class="muted" style="font-size:11.5px">範囲外 {a.confidence["n_out"]} / {a.confidence["n_checked"]} 指標</div></div>
-</div>
-
-<h3>3軸での位置づけ</h3>
-<p class="sub">値は既存5店を基準にした標準化スコア（0=5店平均、±1=標準偏差1つ分）。</p>
-<table><thead><tr><th class="l">軸</th><th class="l">新店の位置（低 ← 5店平均 → 高）</th>
-<th class="l">読み方</th><th>重み</th><th class="l">構成変数</th></tr></thead>
-<tbody>{"".join(rows)}</tbody></table>
-
-<details><summary>都市部／郊外 判定の内訳を見る</summary>
-<table><thead><tr><th class="l">指標</th><th>新店の値</th><th>郊外の目安</th>
-<th>都市部の目安</th><th>スコア</th><th>重み</th></tr></thead>
-<tbody>{detail}</tbody></table>
-<p class="sub">各指標を「郊外の目安=0／都市部の目安=1」に線形変換し、重み付き平均したものが都市度スコアです。
-閾値は config/columns.yaml の urban_rural で変更できます。</p></details>
-"""
-
-
-def _sec_ranking(a: Analysis) -> str:
-    cfg = a.cfg
     picked = {p.store_id for p in a.peers}
-    head = "".join(f'<th>{esc(cfg.axes[ax]["label"].split("（")[0])}</th>' for ax in cfg.axes)
-    rows = []
+    prank = []
     for s in a.similarity.ranking:
         tag = '<span class="tag pick">採用</span>' if s.store_id in picked else ""
         ud = a.urban_stores.get(s.store_id)
-        axis_cells = "".join(
-            f'<td>{fnum(s.axis_distance.get(ax), 2)}<br>'
-            f'<span class="muted" style="font-size:11px">{esc(s.coverage.get(ax, ""))}</span></td>'
+        cells = "".join(
+            f'<td>{fnum(s.axis_distance.get(ax), 2)}'
+            f'<br><span class="muted" style="font-size:11px">{esc(s.coverage.get(ax, ""))}</span></td>'
             for ax in cfg.axes
         )
-        rows.append(
+        prank.append(
             f'<tr><td>{s.rank}</td><td class="l">{esc(s.store_name)} {tag}</td>'
             f'<td class="l"><span class="tag">{esc(ud.verdict if ud else "—")}</span></td>'
-            f"<td><strong>{s.similarity:.1f}</strong></td><td>{s.distance:.3f}</td>{axis_cells}</tr>"
+            f'<td><strong>{s.similarity:.1f}</strong></td><td>{s.distance:.3f}</td>{cells}</tr>'
         )
+    ahead = "".join(f'<th>{esc(cfg.axes[ax]["label"].split("（")[0])}</th>' for ax in cfg.axes)
 
     reasons = []
     for p in a.peers:
         gaps = p.top_gaps(cfg, a.similarity.z_new, a.similarity.z_stores[p.store_id])
-        close = [(ax, d) for ax, d in p.axis_distance.items() if d is not None]
-        close.sort(key=lambda t: t[1])
+        close = sorted([(ax, d) for ax, d in p.axis_distance.items() if d is not None],
+                       key=lambda t: t[1])
         near = "、".join(f"{cfg.axes[ax]['label'].split('（')[0]}（距離{d:.2f}）" for ax, d in close[:2])
-        gl = "".join(
-            f'<li>{esc(g["label"])}：{esc(g["direction"])}（差 {g["z_gap"]:.2f}σ'
-            f'{"／" + esc(cfg.axes[g["axis"]]["label"].split("（")[0]) if g["axis"] else ""}）</li>'
-            for g in gaps
-        )
+        gl = "".join(f'<li>{esc(g["label"])}：{esc(g["direction"])}（差 {g["z_gap"]:.2f}σ）</li>'
+                     for g in gaps)
         reasons.append(
-            f'<h3>第{p.rank}位: {esc(p.store_name)}（類似度 {p.similarity:.1f}）</h3>'
-            f"<p><strong>近い理由</strong>: {esc(near)} が新店に最も近い。</p>"
-            f"<p><strong>残っている差（上位4件）</strong>:</p><ul>{gl}</ul>"
+            f'<p><strong>第{p.rank}位 {esc(p.store_name)}（類似度 {p.similarity:.1f}）</strong>'
+            f'<br>近い理由: {esc(near)}。残っている差:</p><ul>{gl}</ul>'
         )
 
-    wtxt = "、".join(f"{cfg.axes[k]['label'].split('（')[0]}={v:.2f}" for k, v in a.similarity.weights.items())
-    skipped = ""
-    if a.similarity.skipped:
-        skipped = (f'<div class="note warn">既存店間でばらつきが無く、距離計算から外した変数: '
-                   f'{esc("、".join(cfg.label(k) for k in a.similarity.skipped))}</div>')
+    wtxt = "、".join(f"{cfg.axes[k]['label'].split('（')[0]}={v:.2f}"
+                    for k, v in a.similarity.weights.items())
 
     return f"""
-<h2>2. 類似店ランキングと選定理由</h2>
-<p class="sub">距離は3軸の標準化距離（小さいほど似ている）。類似度は 100/(1+距離)。軸の重み: {esc(wtxt)}</p>
-{skipped}
+<h2>1. 新店の商圏と類似店</h2>
+<p class="sub">商圏定義: {esc(cfg.trade_area_definition)} ／ 分析粒度: {esc(a.idpos.level_label())}
+（{len(a.idpos.units)}単位） ／ 対象: 低温ディビジョン</p>
+<div class="cards">
+  <div class="card"><div class="k">都市部／郊外の判定</div>
+    <div class="v"><span class="tag {ucls}">{esc(u.verdict)}</span></div>
+    <div class="muted" style="font-size:11.5px">都市度スコア {fnum(u.score, 2)}（1.00=都市部／0.00=郊外）</div></div>
+  <div class="card"><div class="k">既存店の内訳</div>
+    <div class="v">都市部 {urban_n} ／ 郊外 {rural_n}</div>
+    <div class="muted" style="font-size:11.5px">全{len(a.stores)}店</div></div>
+  <div class="card pick"><div class="k">採用した類似店</div>
+    <div class="v" style="font-size:15px">{esc("・".join(p.store_name for p in a.peers))}</div>
+    <div class="muted" style="font-size:11.5px">軸の重み: {esc(wtxt)}</div></div>
+</div>
+
+<h3>3軸での位置づけ</h3>
+<p class="sub">値は既存店を基準にした標準化スコア（0=平均、±1=標準偏差1つ分）。</p>
+<table><thead><tr><th class="l">軸</th><th class="l">新店の位置（低 ← 平均 → 高）</th>
+<th class="l">読み方</th><th>重み</th></tr></thead><tbody>{"".join(rows)}</tbody></table>
+
+<h3>類似店ランキング</h3>
 <table><thead><tr><th>順位</th><th class="l">既存店</th><th class="l">立地タイプ</th>
-<th>類似度</th><th>距離</th>{head}</tr></thead><tbody>{"".join(rows)}</tbody></table>
-<p class="sub">軸ごとのセルは「距離（上段）／計算に使えた変数の数（下段）」です。</p>
+<th>類似度</th><th>距離</th>{ahead}</tr></thead><tbody>{"".join(prank)}</tbody></table>
 {"".join(reasons)}
-<div class="note">類似度の数値そのものに統計的な意味はありません。5店の中での相対的な近さの順位だけを使ってください。
-重みを変えると順位が入れ替わる場合があります（<code>--weight</code> オプションで再計算できます）。</div>
+
+<details><summary>都市部／郊外 判定の内訳</summary>
+<table><thead><tr><th class="l">指標</th><th>新店の値</th><th>郊外の目安</th>
+<th>都市部の目安</th><th>スコア</th><th>重み</th></tr></thead>
+<tbody>{"".join(detail_rows)}</tbody></table></details>
 """
 
 
-def _sec_range(a: Analysis) -> str:
+def _pred_cell(p, mcfg) -> str:
+    if p is None or p.point is None:
+        return '<td class="muted">—</td>'
+    m = mcfg.metric(p.metric)
+    dg = getattr(m, "digits", 2)
+    rng = (f'<br><span class="muted" style="font-size:11px">'
+           f'{p.low:,.{dg}f}〜{p.high:,.{dg}f}</span>') if p.low is not None else ""
+    return f'<td><strong>{p.point:,.{dg}f}</strong>{rng}</td>'
+
+
+def _sec_predictions(a) -> str:
+    mcfg, idpos = a.mcfg, a.idpos
+    by_unit = a.predictions_by_unit()
+    mets = [m for m in ("pi", "gross_margin_rate", "gp_pi", "sales_per_week")
+            if m in idpos.metrics]
+    risk_by_unit = {r.unit: r for r in a.risks}
+
+    head = "".join(f'<th>{esc(mcfg.metric_label(m))}<br>'
+                   f'<span class="muted" style="font-size:11px">予測／区間</span></th>'
+                   for m in mets)
+
+    body, current_line = [], None
+    for unit in sorted(by_unit, key=lambda u: (idpos.parent_of(u, "line") or u, u)):
+        line = idpos.parent_of(unit, "line") or unit
+        if line != current_line:
+            current_line = line
+            body.append(f'<tr><td class="l" colspan="{len(mets) + 4}" '
+                        f'style="background:#eef2f7;font-weight:600">{esc(line)}</td></tr>')
+        mets_d = by_unit[unit]
+        cells = "".join(_pred_cell(mets_d.get(m), mcfg) for m in mets)
+        pi = mets_d.get("pi")
+        peers = ("・".join(f"{c.store_name}{c.weight:.0%}" for c in pi.peers)
+                 if pi and pi.peers else "—")
+        acc = "—"
+        if pi and pi.loo_mape is not None:
+            cls = "ok" if pi.loo_mape < 8 else ("warn" if pi.loo_mape < 15 else "bad")
+            acc = f'<span class="tag {cls}">±{pi.loo_mape:.0f}%</span>'
+        r = risk_by_unit.get(unit)
+        rlv = (f'<span class="tag {"bad" if r.level == "要対策" else "warn" if r.level == "警戒" else ""}">'
+               f'{esc(r.level)}</span>') if r and r.level != "—" else ""
+        leaf = idpos.leaf(unit)
+        body.append(
+            f'<tr><td class="l" style="padding-left:18px">{esc(leaf)}</td>{cells}'
+            f'<td>{acc}</td><td class="l muted" style="font-size:11px">{esc(peers)}</td>'
+            f'<td>{rlv}</td></tr>'
+        )
+
+    basis = "".join(
+        f'<tr><td class="l">{esc(idpos.leaf(p.unit))}</td>'
+        f'<td class="l">{esc(mcfg.metric_label(p.metric))}</td>'
+        f'<td class="l" style="font-size:11.5px">{esc(p.basis)}</td></tr>'
+        for p in a.predictions if p.metric == "pi"
+    )
+
+    return f"""
+<h2>2. 想定される粗利率・PI値</h2>
+<p class="sub">{esc(mcfg.pi_definition)}<br>
+予測値 = 類似店の実績の加重平均。下段の区間は<strong>LOO検証で実際に出た誤差</strong>の
+80パーセンタイルから作っています（モデルの信頼区間ではありません）。</p>
+<table><thead><tr><th class="l">{esc(idpos.level_label())}</th>{head}
+<th>実測精度<br><span class="muted" style="font-size:11px">LOO誤差</span></th>
+<th class="l">根拠にした類似店</th><th>苦戦</th></tr></thead>
+<tbody>{"".join(body)}</tbody></table>
+<div class="note">「実測精度 ±X%」は、同じ手順で既存店を予測したときの平均誤差です。
+±15%を超えるものは、予測値そのものより<strong>レンジの下限</strong>で初期棚を組み、
+開店後の実績で決めてください。</div>
+
+<details><summary>1件ずつの根拠を見る</summary>
+<table><thead><tr><th class="l">{esc(idpos.level_label())}</th><th class="l">指標</th>
+<th class="l">根拠</th></tr></thead><tbody>{basis}</tbody></table></details>
+"""
+
+
+def _sec_customers(a) -> str:
+    am = a.age_mix
+    if am is None:
+        return ("<h2>3. 顧客層（年代別）</h2>"
+                "<p class=\"muted\">IDPOSに年代の行が無いため、この分析はスキップしました。</p>")
+
+    rows = "".join(
+        f'<tr><td class="l">{esc(r.band)}</td>'
+        f'<td><strong>{fpct(r.blended if r.blended is not None else r.peer_based)}</strong></td>'
+        f'<td>{fpct(r.peer_based)}</td><td>{fpct(r.area_based)}</td>'
+        f'<td>{fpct(r.area_share)}</td>'
+        f'<td>{"—" if r.bias_mean is None else f"{r.bias_mean:.2f}倍"}</td>'
+        f'<td class="muted">{"—" if r.bias_cv is None else f"±{r.bias_cv:.0%}"}</td></tr>'
+        for r in am.rows
+    )
+
+    unit_rows = []
+    for unit, u in sorted(a.age_mix_by_unit.items()):
+        best = max(u.rows, key=lambda r: (r.blended or r.peer_based or 0))
+        second = sorted(u.rows, key=lambda r: -(r.blended or r.peer_based or 0))[1:2]
+        s = second[0] if second else None
+        unit_rows.append(
+            f'<tr><td class="l">{esc(a.idpos.parent_of(unit, "line") or "")}</td>'
+            f'<td class="l">{esc(a.idpos.leaf(unit))}</td>'
+            f'<td class="l">{esc(best.band)} '
+            f'({fpct(best.blended if best.blended is not None else best.peer_based)})</td>'
+            f'<td class="l">{esc(s.band) if s else "—"} '
+            f'({fpct(s.blended if s and s.blended is not None else (s.peer_based if s else None))})</td>'
+            f'<td class="muted" style="font-size:11px">'
+            f'{esc("・".join(u.peer_names))}</td></tr>'
+        )
+
+    unk = a.idpos.age_unknown_share
+    unk_txt = ""
+    if unk:
+        worst = max(unk.values())
+        unk_txt = (f'<p class="sub">年代が取れていない売上の割合（既存店の最大）: '
+                   f'{worst:.1%}。この分は構成比の計算から外しています。</p>')
+
+    notes = "".join(f'<div class="note warn">{esc(n)}</div>' for n in am.notes)
+
+    return f"""
+<h2>3. 顧客層（年代別）</h2>
+<p class="sub">IDPOSの年代別売上から算出。性別は実データに無いため使っていません。<br>
+2つの方法で推定しています。どちらが当たるかはLOO検証で測りました。</p>
+<div class="cards">
+  <div class="card"><div class="k">類似店ベースの実測誤差</div>
+    <div class="v">{"—" if am.loo_mae_peer_pt is None else f"±{am.loo_mae_peer_pt:.1f}pt"}</div>
+    <div class="muted" style="font-size:11.5px">類似店の年代構成をそのまま使う</div></div>
+  <div class="card"><div class="k">商圏補正ベースの実測誤差</div>
+    <div class="v">{"—" if am.loo_mae_area_pt is None else f"±{am.loo_mae_area_pt:.1f}pt"}</div>
+    <div class="muted" style="font-size:11.5px">商圏年齢構成 × 来店バイアス</div></div>
+  <div class="card pick"><div class="k">採用すべき方法</div>
+    <div class="v" style="font-size:16px">{esc(am.best_method)}</div>
+    <div class="muted" style="font-size:11.5px">誤差が小さいほうを採用</div></div>
+</div>
+{notes}
+{unk_txt}
+<table><thead><tr><th class="l">年代</th><th>予測（両者の平均）</th>
+<th>類似店ベース</th><th>商圏補正ベース</th><th>商圏の年齢構成</th>
+<th>来店バイアス</th><th>店舗間のばらつき</th></tr></thead><tbody>{rows}</tbody></table>
+<p class="sub">来店バイアス = 会員の年代構成比 ÷ 商圏の年齢構成比。既存店の平均。
+1.0を超える年代は「商圏にいる以上に来ている」。ばらつきが大きい年代は、
+この補正自体が当てになりません。</p>
+
+<h3>カテゴリーごとの主購買層</h3>
+<table><thead><tr><th class="l">ライン</th><th class="l">{esc(a.idpos.level_label())}</th>
+<th class="l">最も多い年代</th><th class="l">2番目</th>
+<th class="l">根拠にした類似店</th></tr></thead><tbody>{"".join(unit_rows)}</tbody></table>
+<div class="note">棚割を動かすときは、この主購買層と商圏の年齢構成を突き合わせてください。
+商圏に多い年代が主購買層のカテゴリーは伸ばす余地があり、
+商圏に少ない年代が主購買層のカテゴリーは類似店ほど取れない可能性があります。</div>
+"""
+
+
+def _sec_accuracy(a) -> str:
+    mcfg = a.mcfg
+    rows = a.loo.summary_rows(mcfg)
+    by_metric: dict[str, list[dict]] = {}
+    for r in rows:
+        by_metric.setdefault(r["metric"], []).append(r)
+
+    mrows = []
+    for met, rs in by_metric.items():
+        vals = [r["mape"] for r in rs]
+        bvals = [r["baseline_mape"] for r in rs if r["baseline_mape"] is not None]
+        wins = sum(1 for r in rs if r["beats_baseline"])
+        mean_v = sum(vals) / len(vals)
+        base_v = f"{sum(bvals) / len(bvals):.1f}%" if bvals else "—"
+        cls = "ok" if mean_v < 8 else ("warn" if mean_v < 15 else "bad")
+        judge = ("類似店法を使う価値がある" if wins > len(rs) / 2
+                 else "全店平均で代用したほうがよい")
+        mrows.append(
+            f'<tr><td class="l">{esc(mcfg.metric_label(met))}</td>'
+            f'<td><span class="tag {cls}">±{mean_v:.1f}%</span></td>'
+            f'<td>{base_v}</td><td>{wins} / {len(rs)}</td>'
+            f'<td class="l">{esc(judge)}</td></tr>'
+        )
+
+    worst = sorted(rows, key=lambda r: -r["mape"])[:8]
+    wrows = ""
+    for r in worst:
+        base_v = "—" if r["baseline_mape"] is None else f'{r["baseline_mape"]:.1f}%'
+        wrows += (
+            f'<tr><td class="l">{esc(a.idpos.leaf(r["unit"]))}</td>'
+            f'<td class="l">{esc(r["metric_label"])}</td>'
+            f'<td>±{r["mape"]:.1f}%</td><td>{base_v}</td>'
+            f'<td>{r["n_folds"]}</td></tr>'
+        )
+
+    scan = ""
+    if not a.level_scan.empty:
+        ls = a.level_scan[a.level_scan["metric"] == "pi"]
+        if not ls.empty:
+            srows = ""
+            for _, r in ls.iterrows():
+                base_v = ("—" if pd.isna(r["全店平均の誤差%"])
+                          else f'{r["全店平均の誤差%"]:.1f}%')
+                cvv = ("—" if pd.isna(r["週次変動の中央値%"])
+                       else f'±{r["週次変動の中央値%"]:.1f}%')
+                srows += (
+                    f'<tr><td class="l">{esc(r["粒度"])}</td><td>{int(r["単位数"])}</td>'
+                    f'<td>±{r["LOO平均誤差%"]:.1f}%</td><td>{base_v}</td>'
+                    f'<td>{cvv}</td></tr>'
+                )
+            scan = f"""
+<h3>どの粒度まで下げられるか</h3>
+<p class="sub">粒度を下げるほど提案は具体的になりますが、1単位あたりの数字が小さくなり、
+5店舗では当たらなくなります。その境目を実測したものです（指標: PI値）。</p>
+<table><thead><tr><th class="l">粒度</th><th>単位数</th><th>LOO平均誤差</th>
+<th>全店平均の誤差</th><th>週次変動（1店の中のブレ）</th></tr></thead>
+<tbody>{srows}</tbody></table>
+<div class="note">「週次変動」は同じ店の同じカテゴリーが週ごとにどれだけ振れるかです。
+<strong>LOO誤差がこれを下回ることは原理的にありません</strong>。
+LOO誤差が週次変動に近い粒度までは使えますが、大きく上回る粒度では
+予測しているのではなく店舗差のノイズを拾っているだけです。</div>
+"""
+
+    dirs = ""
+    for met, dr in a.directions.items():
+        if not dr.findings:
+            continue
+        strong = [f for f in dr.findings if f.strength == "根拠あり"][:12]
+        if not strong:
+            continue
+        frows = "".join(
+            f'<tr><td class="l">{esc(f.var_label)}</td>'
+            f'<td class="l">{esc(a.idpos.leaf(f.unit))}</td>'
+            f'<td><span class="tag {"ok" if f.direction == "正" else "warn"}">{esc(f.direction)}</span></td>'
+            f'<td>{f.n_same_direction} / {len(a.stores)}</td>'
+            f'<td>{f.concordant} / {f.total_pairs}</td>'
+            f'<td>{f.median_slope * 100:+.1f}%</td></tr>'
+            for f in strong
+        )
+        dirs += f"""
+<h4>{esc(mcfg.metric_label(met))} と商圏変数の関係</h4>
+<p class="sub">{esc(dr.note)}</p>
+<table><thead><tr><th class="l">商圏変数</th><th class="l">{esc(a.idpos.level_label())}</th>
+<th>方向</th><th>同傾向の店舗数</th><th>一致ペア</th><th>1σあたりの変化</th></tr></thead>
+<tbody>{frows}</tbody></table>"""
+
     c = a.confidence
     out = [i for i in a.ranges if i.out_of_range]
-    missing = [i for i in a.ranges if i.status in ("新店データなし", "既存店データなし")]
-
-    cls = {"高": "note", "中〜高": "note", "中": "note warn", "低": "note bad"}.get(c["level"], "note warn")
-    if out:
-        rows = "".join(
-            f'<tr><td class="l">{esc(i.label)}</td>'
-            f'<td class="l">{esc(a.cfg.axes[i.axis]["label"].split("（")[0]) if i.axis else "<span class=muted>参考</span>"}</td>'
-            f"<td>{fnum(i.value, 2)}</td><td>{fnum(i.vmin, 2)}</td><td>{fnum(i.vmax, 2)}</td>"
-            f'<td><span class="tag {"bad" if i.axis else "warn"}">{esc(i.status)}</span></td>'
-            f"<td>{'∞' if i.overshoot == float('inf') else f'{i.overshoot:.2f}'}</td></tr>"
-            for i in out
-        )
-        table = f"""<table><thead><tr><th class="l">指標</th><th class="l">用途</th>
-<th>新店の値</th><th>既存5店 最小</th><th>既存5店 最大</th><th>判定</th><th>はみ出し幅</th>
-</tr></thead><tbody>{rows}</tbody></table>
-<p class="sub">「はみ出し幅」は既存5店のレンジ幅を1としたときの超過量。1.0なら、レンジと同じ幅だけ外側にあるという意味です。</p>"""
-    else:
-        table = "<p>範囲外の指標はありません。</p>"
-
-    miss = ""
-    if missing:
-        miss = (f'<div class="note warn">値が埋まっていない指標が{len(missing)}件あります: '
-                f'{esc("、".join(i.label for i in missing[:12]))}'
-                f'{" ほか" if len(missing) > 12 else ""}。'
-                "これらは類似度・範囲チェックの対象外です。埋めるほど判定は安定します。</div>")
+    orows = "".join(
+        f'<tr><td class="l">{esc(i.label)}</td>'
+        f'<td class="l">{esc(a.cfg.axes[i.axis]["label"].split("（")[0]) if i.axis else "参考"}</td>'
+        f'<td>{fnum(i.value, 2)}</td><td>{fnum(i.vmin, 2)}</td><td>{fnum(i.vmax, 2)}</td>'
+        f'<td><span class="tag {"bad" if i.axis else "warn"}">{esc(i.status)}</span></td></tr>'
+        for i in out
+    ) or '<tr><td colspan="6" class="l muted">範囲外の指標はありません</td></tr>'
 
     warn_html = "".join(f'<div class="note warn">{esc(w)}</div>' for w in a.warnings)
+    ccls = {"高": "note", "中〜高": "note", "中": "note warn", "低": "note bad"}.get(
+        c["level"], "note warn")
 
     return f"""
-<h2>3. 範囲外の指標と信頼度</h2>
-<div class="{cls}"><strong>総合的な信頼度: {esc(c["level"])}</strong><br>{esc(c["message"])}</div>
+<h2>4. 数字の根拠と正確性</h2>
+
+<h3>LOO検証（1店抜きの実測誤差）</h3>
+<p class="sub">既存{len(a.stores)}店を1店ずつ「新店だと思って」残りから予測し、実績と比べました。
+これが本ツールで出せる唯一の正直な精度です。検証点は指標あたり
+{len(a.stores)} × {len(a.idpos.units)}単位 = {len(a.stores) * len(a.idpos.units)}件。</p>
+<table><thead><tr><th class="l">指標</th><th>類似店法の誤差</th><th>全店平均の誤差</th>
+<th>勝った単位数</th><th class="l">判定</th></tr></thead><tbody>{"".join(mrows)}</tbody></table>
+
+<h4>特に当たっていない組み合わせ</h4>
+<table><thead><tr><th class="l">{esc(a.idpos.level_label())}</th><th class="l">指標</th>
+<th>LOO誤差</th><th>全店平均の誤差</th><th>検証点</th></tr></thead><tbody>{wrows}</tbody></table>
+<div class="note bad">ここに出ているものは、予測値を信じないでください。
+既存店ですら当てられていない組み合わせです。</div>
+{scan}
+
+<h3>新店の指標が既存店の範囲に収まっているか</h3>
+<div class="{ccls}"><strong>総合的な信頼度: {esc(c["level"])}</strong><br>{esc(c["message"])}</div>
+<table><thead><tr><th class="l">指標</th><th class="l">用途</th><th>新店</th>
+<th>既存 最小</th><th>既存 最大</th><th>判定</th></tr></thead><tbody>{orows}</tbody></table>
+
+<h3>商圏変数とカテゴリーの関係（仮説）</h3>
+{dirs or '<p class="muted">基準を満たす組み合わせはありませんでした。</p>'}
 {warn_html}
-<h3>既存5店の最小〜最大から外れた指標</h3>
-{table}
-{miss}
-<div class="note">範囲外の指標は「既存店で起きたことがない状況」です。その指標が効くカテゴリについては、
-類似店の実績をそのまま当てないでください。特に3軸に使う指標が範囲外の場合、類似店の選定自体が外挿になります。</div>
 """
 
 
-def _sec_direction(a: Analysis) -> str:
-    cfg = a.cfg
-    dr = a.directions
-    n_pairs = len(a.stores) * (len(a.stores) - 1) // 2
-
-    if not dr.findings:
-        body = "<p>基準を満たす組み合わせはありませんでした。5店舗では珍しいことではありません。</p>"
-    else:
-        strong = [f for f in dr.findings if f.strength == "根拠あり"]
-        weak = [f for f in dr.findings if f.strength == "参考"]
-
-        def mk(rows):
-            out = []
-            for f in rows:
-                axis = (esc(cfg.axes[f.axis]["label"].split("（")[0]) if f.axis
-                        else '<span class="muted">参考変数</span>')
-                same = f'<strong>{f.n_same_direction}</strong> / {len(a.stores)}'
-                cluster = ""
-                if f.cluster_members:
-                    cluster = (f'<br><span class="muted" style="font-size:11px">同じ動き: '
-                               f'{esc("、".join(f.cluster_members[:4]))}'
-                               f'{" ほか" if len(f.cluster_members) > 4 else ""}</span>')
-                out.append(
-                    f'<tr><td class="l">{esc(f.var_label)}{cluster}</td><td class="l">{axis}</td>'
-                    f'<td class="l">{esc(f.category)}</td>'
-                    f'<td><span class="tag {"ok" if f.direction == "正" else "warn"}">{esc(f.direction)}</span></td>'
-                    f"<td>{same}</td><td>{f.concordant} / {f.total_pairs}</td>"
-                    f"<td>{f.median_slope * 100:+.2f}pt</td></tr>"
-                )
-            return "".join(out)
-
-        head = (f'<tr><th class="l">商圏変数</th><th class="l">軸</th><th class="l">カテゴリ</th>'
-                f'<th>方向</th><th>同傾向の店舗数</th><th>一致ペア</th><th>変化量の目安</th></tr>')
-        empty = '<tr><td colspan="7" class="l muted">該当なし</td></tr>'
-        body = f"""
-<h3>根拠あり（全{n_pairs}ペアで符号が一致、かつ4店以上が同方向）</h3>
-<table><thead>{head}</thead><tbody>{mk(strong[:30]) or empty}</tbody></table>
-{f'<p class="sub">{len(strong)}件中 上位30件を表示しています（Excel出力には全件入ります）。</p>' if len(strong) > 30 else ""}
-<h3>参考（1ペアだけ符号が逆、かつ3店以上が同方向）</h3>
-<table><thead>{head}</thead><tbody>{mk(weak[:20]) or empty}</tbody></table>
-"""
-
-    clusters = ""
-    if dr.clusters:
-        rows = "".join(
-            f'<tr><td class="l">{esc(c["representative"])}</td>'
-            f'<td class="l muted">{esc("、".join(c["members"]))}</td></tr>'
-            for c in dr.clusters
+def _sec_risk(a) -> str:
+    shown = [r for r in a.risks if r.level != "—"]
+    if not shown:
+        return ("<h2>5. 苦戦が予想されるカテゴリー</h2>"
+                "<p>判定ルールに引っかかるカテゴリーはありませんでした。</p>")
+    rows = []
+    for r in shown:
+        cls = {"要対策": "bad", "警戒": "warn", "注意": ""}[r.level]
+        ccls = {"低": "bad", "中": "warn", "高": "ok"}[r.confidence]
+        fl = "".join(
+            f'<li><span class="tag {"bad" if f.severity >= 2 else "warn"}">{esc(f.kind)}</span> '
+            f'{esc(f.message)}</li>' for f in r.business_flags
+        ) or '<li class="muted">—</li>'
+        ul = "".join(f'<li>{esc(f.message)}</li>' for f in r.uncertainty_flags)
+        ul_html = (f'<details><summary>この判定の不確かさ（{len(r.uncertainty_flags)}件）</summary>'
+                   f'<ul style="margin:4px 0;padding-left:16px;font-size:11.5px">{ul}</ul></details>'
+                   if ul else "")
+        rows.append(
+            f'<tr><td class="l">{esc(a.idpos.parent_of(r.unit, "line") or r.line)}</td>'
+            f'<td class="l"><strong>{esc(a.idpos.leaf(r.unit))}</strong></td>'
+            f'<td><span class="tag {cls}">{esc(r.level)}</span></td>'
+            f'<td><span class="tag {ccls}">{esc(r.confidence)}</span></td>'
+            f'<td class="l"><ul style="margin:0;padding-left:16px">{fl}</ul>{ul_html}</td>'
+            f'<td class="l">{esc(r.action)}</td></tr>'
         )
-        clusters = f"""
-<details><summary>まとめた変数グループ（5店舗ではほぼ同じ動きをするため区別できない）を見る</summary>
-<table><thead><tr><th class="l">代表として表に出した変数</th>
-<th class="l">まとめられた変数（同じ根拠を重複して数えないため非表示）</th></tr></thead>
-<tbody>{rows}</tbody></table>
-<p class="sub">ここでまとめられた変数同士は、5店舗のデータでは区別できません。
-表に出ている代表変数が原因だとは言えず、同じグループのどれが効いているかは判別不能です。</p></details>"""
+    n_low = sum(1 for r in shown if r.confidence == "低")
+    return f"""
+<h2>5. 苦戦が予想されるカテゴリー</h2>
+<p class="sub">「苦戦」は商売上のリスク（水準が低い／商圏が範囲外／競合が重い／粗利貢献が小さい）だけで
+判定しています。<strong>「予測が読めない」ことは苦戦ではない</strong>ので、別列の「判定の確からしさ」に分けました。</p>
+<table><thead><tr><th class="l">ライン</th><th class="l">{esc(a.idpos.level_label())}</th>
+<th>苦戦</th><th>判定の<br>確からしさ</th><th class="l">根拠</th>
+<th class="l">開店前にやること</th></tr></thead><tbody>{"".join(rows)}</tbody></table>
+<div class="note warn">「苦戦」は<strong>既存店と比べて低く出る見込み</strong>であって、赤字になるという意味ではありません。<br>
+確からしさ「低」が{n_low}件あります。これらはLOO誤差や週次のブレが大きく、
+<strong>判定そのものが当てになりません</strong>。開店後の実績で確認してください。</div>
+"""
 
+
+def _sec_followup(a) -> str:
+    v = a.mcfg.verification
+    rows = "".join(
+        f'<tr><td><span class="tag {"bad" if c["priority"] == "最優先" else "warn" if c["priority"] == "高" else ""}">'
+        f'{esc(c["priority"])}</span></td><td class="l">{esc(c["item"])}</td>'
+        f'<td class="l">{esc(c["timing"])}</td><td class="l">{esc(c["action"])}</td></tr>'
+        for c in a.checklist
+    )
     rg = ""
     if a.rural_gaps:
-        rows = "".join(
-            f'<tr><td class="l">{esc(r["category"])}</td><td>{fpct(r["rural_share"])}</td>'
-            f'<td>{fpct(r["urban_mean"])}</td><td>{fpct(r["urban_min"])}〜{fpct(r["urban_max"])}</td>'
-            f'<td>{r["diff_pt"]:+.2f}pt</td>'
-            f'<td class="l"><span class="tag {"warn" if not r["inside_urban_range"] else ""}">{esc(r["note"])}</span></td></tr>'
-            for r in a.rural_gaps[:15]
+        grows = "".join(
+            f'<tr><td class="l">{esc(a.idpos.leaf(r["category"]))}</td>'
+            f'<td>{fnum(r["rural_share"], 2)}</td><td>{fnum(r["urban_mean"], 2)}</td>'
+            f'<td>{fnum(r["urban_min"], 2)}〜{fnum(r["urban_max"], 2)}</td>'
+            f'<td>{r["diff_pt"]:+.1f}%</td>'
+            f'<td class="l"><span class="tag {"warn" if not r["inside_urban_range"] else ""}">'
+            f'{esc(r["note"])}</span></td></tr>'
+            for r in a.rural_gaps[:10]
         )
         rg = f"""
-<h3>郊外店 vs 都市部店の構成比差（立地の影響を受けやすいカテゴリの候補）</h3>
-<table><thead><tr><th class="l">カテゴリ</th><th>郊外店</th><th>都市部4店 平均</th>
-<th>都市部4店 レンジ</th><th>差</th><th class="l">判定</th></tr></thead><tbody>{rows}</tbody></table>
-<div class="note bad">郊外店は1店しかないため、ここに出る差は「その1店の個性」と「郊外という立地の効果」を
-区別できていません。カテゴリの当たりをつけるための材料であって、根拠ではありません。</div>
-"""
+<h3>郊外店 vs 都市部店（参考）</h3>
+<table><thead><tr><th class="l">{esc(a.idpos.level_label())}</th><th>郊外店</th>
+<th>都市部 平均</th><th>都市部 レンジ</th><th>差</th><th class="l">判定</th></tr></thead>
+<tbody>{grows}</tbody></table>
+<div class="note bad">郊外店は1店しかないため、ここの差は「郊外という立地の効果」と
+「その1店の個性」を区別できていません。</div>"""
 
     return f"""
-<h2>4. 商圏差とカテゴリ構成比差の方向性（仮説）</h2>
-<p class="sub">全{n_pairs}ペア（{len(a.stores)}店の総当たり）について
-「商圏変数が大きい側は、そのカテゴリ構成比も大きいか」を数えたものです。回帰係数ではありません。</p>
-<div class="note warn"><strong>この表の読み方と限界</strong><br>
-{esc(dr.note)}<br>
-「同傾向の店舗数」は、その変数が平均より高い（低い）店で、カテゴリ構成比も平均より高い（低い）店の数です。
-平均付近にいる店はどちらにも数えません。<br>
-<strong>5店舗では因果も有意性も言えません。</strong>
-「同傾向の店舗数」が多いものだけを、現場感覚と突き合わせて仮説として扱ってください。</div>
-{body}
-{clusters}
+<h2>6. 開店後の答え合わせと精度向上</h2>
+<div class="note"><strong>やり方</strong><br>
+1. 本レポート作成時に予測が <code>output/predictions_*.json</code> に保存されています。<br>
+2. 新店の週次IDPOSがたまったら <code>python run_report.py verify</code> を実行します。<br>
+3. 開店直後の{v.get("exclude_first_weeks", 2)}週はご祝儀需要が乗るため自動で除外され、
+{v.get("min_weeks_for_judgement", 4)}週未満は「判定保留」になります。<br>
+4. 開店月の実績は、既存店の同じ月の季節指数で補正してから比較します。<br>
+5. 予測から外れていても、週次のブレで説明できる範囲なら「ブレの範囲」と判定します。
+   毎週データを足すほど、この幅が狭まって判定が確定します。</div>
+<table><thead><tr><th>優先度</th><th class="l">やること</th><th class="l">タイミング</th>
+<th class="l">ズレていたときの打ち手</th></tr></thead><tbody>{rows}</tbody></table>
 {rg}
 """
 
-
-def _sec_member(a: Analysis) -> str:
-    if not a.member_gaps:
-        return """
-<h2>4-2. 会員構成比と商圏年齢構成のズレ</h2>
-<p class="muted">会員構成比ファイルが指定されていないため、この分析はスキップしました。</p>"""
-
-    blocks = []
-    for g in a.member_gaps:
-        rows = "".join(
-            f'<tr><td class="l">{esc(r.bucket)}</td><td>{fpct(r.member_share)}</td>'
-            f"<td>{fpct(r.area_share)}</td>"
-            f'<td>{"—" if r.gap_pt is None else f"{r.gap_pt * 100:+.1f}pt"}</td>'
-            f'<td class="l muted">{esc(r.lean)}</td></tr>'
-            for r in g.rows
-        )
-        gm = "／".join(f"{k} {v:.0%}" for k, v in g.gender_mix.items())
-        blocks.append(
-            f"<h3>{esc(g.store_name)}</h3>"
-            f'<p class="sub">会員の性別構成: {esc(gm) or "—"} ／ '
-            f"ズレの大きさ（総変動距離）: <strong>{fpct(g.tvd)}</strong> ／ "
-            f"商圏統計の信頼度: <strong>{esc(g.reliability)}</strong></p>"
-            f'<table><thead><tr><th class="l">年代</th><th>会員構成比</th><th>商圏年齢構成比</th>'
-            f'<th>ズレ</th><th class="l">読み方</th></tr></thead><tbody>{rows}</tbody></table>'
-        )
-
-    return f"""
-<h2>4-2. 会員構成比と商圏年齢構成のズレ</h2>
-<p class="sub">商圏統計の年齢構成は15歳以上で再正規化して比較しています（会員に未就学・小学生が含まれないため）。</p>
-<div class="note">ズレが大きい店ほど「商圏に住んでいる人」と「実際に来ている人」が違います。
-新店でも同程度のズレが起きると見て、商圏統計から直接カテゴリを決めるのは避けてください。
-なおIDPOS会員には居住地が紐づいていないため、このズレには「商圏外からの来店」と
-「商圏内で来ていない層」が混ざっています。分離はできません。</div>
-{"".join(blocks)}
-"""
-
-
-def _sec_shelf(a: Analysis) -> str:
-    if not a.shelf:
-        return "<h2>5. 初期棚割の提案</h2><p>類似店の売上構成比が取得できませんでした。</p>"
-
-    peer_names = [p.store_name for p in a.peers]
-    cols = "".join(f'<th>{esc(n)}</th>' for n in peer_names)
-    rows = []
-    for p in a.shelf:
-        dcls = {"増やす": "ok", "減らす": "bad", "据え置き": ""}[p.direction]
-        peer_cells = "".join(f"<td>{fpct(p.peer_shares.get(n))}</td>" for n in peer_names)
-        margin = (f"{fpct(p.margin_low)}〜{fpct(p.margin_high)}"
-                  if p.margin_low is not None else "—")
-        rows.append(
-            f'<tr><td class="l">{esc(p.category_major or "")}</td>'
-            f'<td class="l"><strong>{esc(p.category)}</strong></td>'
-            f"<td><strong>{fpct(p.share_low)}〜{fpct(p.share_high)}</strong></td>"
-            f"{peer_cells}<td>{fpct(p.all_store_mean)}</td>"
-            f'<td>{fpt(p.delta_vs_all_pt)}</td>'
-            f'<td><span class="tag {dcls}">{esc(p.direction)}</span></td>'
-            f"<td>{margin}</td>"
-            f'<td class="l muted" style="font-size:11.5px">{esc(p.note)}</td></tr>'
-        )
-
-    total_lo = sum(p.share_low for p in a.shelf)
-    total_hi = sum(p.share_high for p in a.shelf)
-
-    return f"""
-<h2>5. 初期棚割の提案</h2>
-<p class="sub">類似店 {esc("・".join(peer_names))} の実績を、新店の初期値の「幅」として使います。
-増減の方向は「類似店の中央値 − 既存{len(a.stores)}店平均」で判断（±0.5pt以内は据え置き）。</p>
-<table><thead><tr><th class="l">大分類</th><th class="l">カテゴリ</th>
-<th>提案レンジ</th>{cols}<th>既存{len(a.stores)}店平均</th><th>平均との差</th>
-<th>方向</th><th>粗利率レンジ</th><th class="l">メモ</th></tr></thead>
-<tbody>{"".join(rows)}</tbody></table>
-<p class="sub">レンジ合計: {fpct(total_lo)} 〜 {fpct(total_hi)}（下限・上限をそれぞれ単純合算したものなので100%にはなりません）。
-実際の棚割は合計100%に収まるよう、優先カテゴリから配分してください。</p>
-<div class="note warn">このレンジは<strong>類似店{len(a.peers)}店の実績値そのもの</strong>であり、新店の予測値ではありません。
-新店固有の条件（売場面積、競合、価格政策）が類似店と違う分は、この表には反映されていません。
-面積が大きく違う場合は、構成比ではなく絶対額ベースでの再検討が必要です。</div>
-"""
-
-
-def _sec_checklist(a: Analysis) -> str:
-    rows = "".join(
-        f'<tr><td><span class="tag {"bad" if c["priority"] == "最優先" else "warn" if c["priority"] == "高" else ""}">'
-        f'{esc(c["priority"])}</span></td>'
-        f'<td class="l">{esc(c["item"])}</td><td class="l">{esc(c["timing"])}</td>'
-        f'<td class="l">{esc(c["action"])}</td></tr>'
-        for c in a.checklist
-    )
-    return f"""
-<h2>6. 開店後にIDPOSで検証・修正すべき項目</h2>
-<table><thead><tr><th>優先度</th><th class="l">検証項目</th><th class="l">タイミング</th>
-<th class="l">ズレていたときの打ち手</th></tr></thead><tbody>{rows}</tbody></table>
-<div class="note">本レポートの価値は「開店時点で何も無いよりマシな初期値を出すこと」までです。
-IDPOSが貯まった時点で、ここの数値は実績に置き換えてください。
-新店を6店目として既存店マスタに追加すると、次の新店の判定が少しずつ安定します。</div>
-"""
-
-
 # ---------------------------------------------------------------- 出力
 
-def render_html(a: Analysis) -> str:
+def render_html(a) -> str:
     now = dt.datetime.now().strftime("%Y-%m-%d %H:%M")
-    inputs = (f"既存店 {len(a.stores)}店 ／ 商圏定義 {esc(a.cfg.trade_area_definition)} ／ "
-              f"設定ファイル {esc(a.cfg.path.name)}")
+    n_weeks = int(a.idpos.panel.groupby("store_id")["week"].nunique().median()) \
+        if len(a.idpos.panel) else 0
+    inputs = (f"既存店 {len(a.stores)}店 ／ 週次IDPOS 中央値{n_weeks}週 ／ "
+              f"分析粒度 {esc(a.idpos.level_label())} ／ 商圏定義 {esc(a.cfg.trade_area_definition)}")
     return f"""<!doctype html>
 <html lang="ja"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>類似店判定レポート｜{esc(a.new_name)}</title>
+<title>新店 低温カテゴリー予測レポート｜{esc(a.new_name)}</title>
 <style>{CSS}</style></head><body><div class="wrap">
 <header>
-<h1>類似店判定レポート — {esc(a.new_name)}</h1>
+<h1>新店 低温カテゴリー予測レポート — {esc(a.new_name)}</h1>
 <p class="sub">{inputs} ／ 作成 {now}</p>
 </header>
 <div class="note bad">{DISCLAIMER}</div>
 {_sec_summary(a)}
-{_sec_ranking(a)}
-{_sec_range(a)}
-{_sec_direction(a)}
-{_sec_member(a)}
-{_sec_shelf(a)}
-{_sec_checklist(a)}
+{_sec_predictions(a)}
+{_sec_customers(a)}
+{_sec_accuracy(a)}
+{_sec_risk(a)}
+{_sec_followup(a)}
 <footer>
-本レポートは shoken_analyzer v0.1.0 が自動生成しました。
-判定ロジックの閾値・軸の重み・項目定義はすべて config/columns.yaml で変更できます。<br>
-既存店が5店である限り、本レポートの内容は仮説の域を出ません。
+shoken_analyzer v0.2.0 が自動生成しました。
+項目定義・軸の重み・判定閾値は config/columns.yaml、
+対象カテゴリーと指標は config/metrics.yaml で変更できます。<br>
+既存店が{len(a.stores)}店である限り、本レポートの予測は仮説です。
+開店後のIDPOSで必ず検証してください。
 </footer>
 </div></body></html>"""
 
 
-def write_html(a: Analysis, path: str | Path) -> Path:
+def write_html(a, path: str | Path) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(render_html(a), encoding="utf-8")
     return path
 
 
-def write_excel(a: Analysis, path: str | Path) -> Path:
+def render_verify_html(v, mcfg) -> str:
+    now = dt.datetime.now().strftime("%Y-%m-%d %H:%M")
+    cls = {"想定内": "ok", "ブレの範囲": "", "上振れ": "warn",
+           "下振れ": "bad", "判定保留": "", "データなし": ""}
+    rows = "".join(
+        f'<tr><td class="l">{esc(r.unit.split(" > ")[0])}</td>'
+        f'<td class="l"><strong>{esc(r.unit.split(" > ")[-1])}</strong></td>'
+        f'<td class="l">{esc(r.metric_label)}</td>'
+        f'<td>{fnum(r.predicted, 2)}</td>'
+        f'<td>{fnum(r.pred_low, 2)}〜{fnum(r.pred_high, 2)}</td>'
+        f'<td>{fnum(r.actual_raw, 2)}</td>'
+        f'<td>{fnum(r.actual_adjusted, 2)}'
+        f'<br><span class="muted" style="font-size:11px">季節指数 {fnum(r.season_index, 2)}</span></td>'
+        f'<td>{"—" if r.diff_pct is None else f"{r.diff_pct:+.1f}%"}</td>'
+        f'<td><span class="tag {cls.get(r.verdict, "")}">{esc(r.verdict)}</span></td>'
+        f'<td class="l" style="font-size:11.5px">{esc(r.comment)}</td></tr>'
+        for r in v.rows
+    )
+    summary = "／".join(f"{k} {n}件" for k, n in v.summary.items())
+    warns = "".join(f'<div class="note warn">{esc(w)}</div>' for w in v.warnings)
+    return f"""<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>予実検証｜{esc(v.store_name)}</title><style>{CSS}</style></head>
+<body><div class="wrap">
+<header><h1>予実検証 — {esc(v.store_name)}</h1>
+<p class="sub">予測作成 {esc(v.predicted_at)} ／ 実績 {v.weeks_observed}週
+（うち開店直後{v.excluded_first_weeks}週を除外） ／ 検証 {now}</p></header>
+<div class="note"><strong>内訳: {esc(summary)}</strong><br>
+実績は「素の平均」と「季節補正後」の両方を出しています。
+予測は既存店の年間平均から作られているので、比較すべきは<strong>季節補正後</strong>です。</div>
+{warns}
+<table><thead><tr><th class="l">ライン</th><th class="l">単位</th><th class="l">指標</th>
+<th>予測</th><th>予測区間</th><th>実績（素）</th><th>実績（季節補正後）</th>
+<th>差</th><th>判定</th><th class="l">コメント</th></tr></thead>
+<tbody>{rows}</tbody></table>
+<div class="note">「下振れ」が出たカテゴリーは、品揃え・売価・棚位置・競合のどれが
+効いているかを切り分けてください。「ブレの範囲」は週数が増えれば確定します。<br>
+週次IDPOSを足して再実行するたびに、判定は精度を増します。
+26週以上たまったら、この店を既存店マスタに6店目として追加してください。</div>
+<footer>shoken_analyzer v0.2.0</footer>
+</div></body></html>"""
+
+
+def write_verify_html(v, mcfg, path: str | Path) -> Path:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(render_verify_html(v, mcfg), encoding="utf-8")
+    return path
+
+
+def write_excel(a, path: str | Path) -> Path:
     """同じ内容をExcelで出す。シートはレポートの章立てに対応。"""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    cfg = a.cfg
+    cfg, mcfg, idpos = a.cfg, a.mcfg, a.idpos
 
+    disclaimer = pd.DataFrame([{"注意事項": t} for t in [
+        "本レポートの数値は既存店の実績の加重平均であり、モデルの予測値ではありません。",
+        "店舗数 < 商圏変数の数のため、回帰・GBM等の学習は行っていません。",
+        "週次IDPOSを増やしても店舗数は増えないため、この制約は解消しません。",
+        "「正確性」はすべてLOO（1店抜き）検証で実測した誤差です。",
+        "郊外店が1店のみのため、郊外寄りの新店に対する根拠は特に弱くなります。",
+        "開店後のIDPOSによる検証を前提に、初期値の出発点としてお使いください。",
+    ]])
     summary = pd.DataFrame([
         {"項目": "新店", "値": a.new_name},
+        {"項目": "分析粒度", "値": idpos.level_label()},
         {"項目": "商圏定義", "値": cfg.trade_area_definition},
         {"項目": "都市部/郊外 判定", "値": a.urban_new.verdict},
         {"項目": "都市度スコア", "値": a.urban_new.score},
+        {"項目": "採用した類似店", "値": "・".join(p.store_name for p in a.peers)},
         {"項目": "信頼度", "値": a.confidence["level"]},
         {"項目": "信頼度の根拠", "値": a.confidence["message"]},
         *[{"項目": f"軸スコア {cfg.axes[ax]['label']}", "値": v}
@@ -529,53 +696,104 @@ def write_excel(a: Analysis, path: str | Path) -> Path:
          "採用": "○" if s.store_id in {p.store_id for p in a.peers} else ""}
         for s in a.similarity.ranking
     ])
+    preds = pd.DataFrame([
+        {"ライン": idpos.parent_of(p.unit, "line"), "単位": idpos.leaf(p.unit),
+         "パス": p.unit, "指標": mcfg.metric_label(p.metric),
+         "予測": p.point, "区間下限": p.low, "区間上限": p.high,
+         "類似店レンジ下限": p.peer_low, "類似店レンジ上限": p.peer_high,
+         "既存全店 中央値": p.all_median, "既存全店 最小": p.all_low,
+         "既存全店 最大": p.all_high,
+         "LOO誤差%": p.loo_mape, "全店平均の誤差%": p.loo_baseline_mape,
+         "週次変動": p.weekly_cv, "最小週数": p.n_weeks_min,
+         "類似店": "・".join(f"{c.store_name}({c.weight:.0%})" for c in p.peers),
+         "根拠": p.basis}
+        for p in a.predictions
+    ])
+    loo_rows = pd.DataFrame([
+        {"対象店": f.held_out_name, "単位": idpos.leaf(f.unit), "パス": f.unit,
+         "指標": mcfg.metric_label(f.metric), "実績": f.actual,
+         "類似店法の予測": f.predicted, "誤差%": f.err_pct,
+         "全店平均の予測": f.baseline, "全店平均の誤差%": f.baseline_err_pct,
+         "採用した類似店": "・".join(f.peers)}
+        for f in a.loo.folds
+    ])
     ranges = pd.DataFrame([
         {"指標": i.label, "軸": i.axis or "参考", "新店": i.value,
-         "既存最小": i.vmin, "既存最大": i.vmax, "判定": i.status, "はみ出し幅": i.overshoot}
+         "既存最小": i.vmin, "既存最大": i.vmax, "判定": i.status}
         for i in a.ranges
     ])
+    risks = pd.DataFrame([
+        {"ライン": r.line, "単位": idpos.leaf(r.unit), "パス": r.unit,
+         "苦戦判定": r.level, "リスク点": r.score,
+         "判定の確からしさ": r.confidence, "不確実点": r.uncertainty,
+         "根拠": " / ".join(f"[{f.kind}] {f.message}" for f in r.business_flags),
+         "不確かさ": " / ".join(f.message for f in r.uncertainty_flags),
+         "開店前にやること": r.action}
+        for r in a.risks if r.level != "—"
+    ])
+    age = pd.DataFrame([
+        {"年代": r.band,
+         "予測": r.blended if r.blended is not None else r.peer_based,
+         "類似店ベース": r.peer_based, "商圏補正ベース": r.area_based,
+         "商圏の年齢構成": r.area_share, "来店バイアス": r.bias_mean,
+         "店舗間ばらつき": r.bias_cv}
+        for r in (a.age_mix.rows if a.age_mix else [])
+    ])
+    age_unit = pd.DataFrame([
+        {"ライン": idpos.parent_of(u, "line"), "単位": idpos.leaf(u), "年代": r.band,
+         "予測": r.blended if r.blended is not None else r.peer_based}
+        for u, am in sorted(a.age_mix_by_unit.items()) for r in am.rows
+    ])
     directions = pd.DataFrame([
-        {"商圏変数": f.var_label, "軸": f.axis or "参考", "カテゴリ": f.category,
-         "方向": f.direction, "一致ペア": f.concordant, "総ペア": f.total_pairs,
-         "同傾向の店舗数": f.n_same_direction, "変化量pt": f.median_slope * 100,
+        {"指標": mcfg.metric_label(met), "商圏変数": f.var_label,
+         "単位": idpos.leaf(f.unit), "方向": f.direction,
+         "同傾向の店舗数": f.n_same_direction, "一致ペア": f.concordant,
+         "総ペア": f.total_pairs, "1σあたり変化%": f.median_slope * 100,
          "根拠": f.strength, "同じ動きの変数": "、".join(f.cluster_members)}
-        for f in a.directions.findings
+        for met, dr in a.directions.items() for f in dr.findings
     ])
-    shelf = pd.DataFrame([
-        {"大分類": p.category_major, "カテゴリ": p.category,
-         "提案レンジ下限": p.share_low, "提案レンジ上限": p.share_high, "中央値": p.share_mid,
-         **{f"類似店_{k}": v for k, v in p.peer_shares.items()},
-         "既存全店平均": p.all_store_mean, "平均との差pt": p.delta_vs_all_pt,
-         "方向": p.direction, "粗利率下限": p.margin_low, "粗利率上限": p.margin_high,
-         "メモ": p.note}
-        for p in a.shelf
-    ])
-    member = pd.DataFrame([
-        {"店舗": g.store_name, "年代": r.bucket, "会員構成比": r.member_share,
-         "商圏年齢構成比": r.area_share, "ズレpt": None if r.gap_pt is None else r.gap_pt * 100,
-         "総変動距離": g.tvd, "商圏統計の信頼度": g.reliability}
-        for g in a.member_gaps for r in g.rows
-    ])
-    rural = pd.DataFrame(a.rural_gaps)
     checklist = pd.DataFrame(a.checklist)
-    disclaimer = pd.DataFrame([{"注意事項": t} for t in [
-        "本レポートは既存5店舗のみを根拠にした仮説であり、統計的に検定された予測ではありません。",
-        "店舗数 < 変数の数のため、回帰・GBM等のモデル学習は行っていません。",
-        "出している数値は (1)類似店の実績値 (2)店舗間の差の方向 (3)既存店の実績レンジ のいずれかです。",
-        "郊外店は1店のみのため、郊外寄りの新店に対する根拠は特に弱くなります。",
-        "開店後のIDPOSによる検証を前提に、初期値の出発点としてお使いください。",
-    ]])
 
     with pd.ExcelWriter(path, engine="openpyxl") as xw:
         disclaimer.to_excel(xw, sheet_name="0_注意事項", index=False)
-        summary.to_excel(xw, sheet_name="1_商圏サマリ", index=False)
-        ranking.to_excel(xw, sheet_name="2_類似店ランキング", index=False)
-        ranges.to_excel(xw, sheet_name="3_範囲チェック", index=False)
-        directions.to_excel(xw, sheet_name="4_方向性仮説", index=False)
-        if not rural.empty:
-            rural.to_excel(xw, sheet_name="4b_郊外vs都市部", index=False)
-        if not member.empty:
-            member.to_excel(xw, sheet_name="4c_会員ズレ", index=False)
-        shelf.to_excel(xw, sheet_name="5_初期棚割提案", index=False)
-        checklist.to_excel(xw, sheet_name="6_IDPOSチェックリスト", index=False)
+        summary.to_excel(xw, sheet_name="1_商圏と類似店", index=False)
+        ranking.to_excel(xw, sheet_name="1b_類似店ランキング", index=False)
+        preds.to_excel(xw, sheet_name="2_予測", index=False)
+        if not age.empty:
+            age.to_excel(xw, sheet_name="3_顧客層", index=False)
+        if not age_unit.empty:
+            age_unit.to_excel(xw, sheet_name="3b_カテゴリ別顧客層", index=False)
+        loo_rows.to_excel(xw, sheet_name="4_LOO検証", index=False)
+        if not a.level_scan.empty:
+            a.level_scan.to_excel(xw, sheet_name="4b_粒度別精度", index=False)
+        ranges.to_excel(xw, sheet_name="4c_範囲チェック", index=False)
+        if not directions.empty:
+            directions.to_excel(xw, sheet_name="4d_方向性仮説", index=False)
+        if not risks.empty:
+            risks.to_excel(xw, sheet_name="5_苦戦予想", index=False)
+        checklist.to_excel(xw, sheet_name="6_チェックリスト", index=False)
+    return path
+
+
+def write_verify_excel(v, mcfg, path: str | Path) -> Path:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df = pd.DataFrame([
+        {"ライン": r.unit.split(" > ")[0], "単位": r.unit.split(" > ")[-1],
+         "パス": r.unit, "指標": r.metric_label,
+         "予測": r.predicted, "区間下限": r.pred_low, "区間上限": r.pred_high,
+         "実績(素)": r.actual_raw, "実績(季節補正後)": r.actual_adjusted,
+         "季節指数": r.season_index, "差%": r.diff_pct,
+         "週次ノイズ許容幅%": r.noise_pct, "使用週数": r.n_weeks_used,
+         "判定": r.verdict, "コメント": r.comment}
+        for r in v.rows
+    ])
+    meta = pd.DataFrame([{"項目": "店舗", "値": v.store_name},
+                         {"項目": "予測作成", "値": v.predicted_at},
+                         {"項目": "実績週数", "値": v.weeks_observed},
+                         {"項目": "除外した開店直後の週数", "値": v.excluded_first_weeks},
+                         *[{"項目": "注意", "値": w} for w in v.warnings]])
+    with pd.ExcelWriter(path, engine="openpyxl") as xw:
+        meta.to_excel(xw, sheet_name="0_前提", index=False)
+        df.to_excel(xw, sheet_name="1_予実", index=False)
     return path

@@ -30,11 +30,16 @@ variables:
   - {key: age_share_30_44,      source: age_share_30_44,      label: 年齢構成比 30-44歳,         group: people, kind: share,    enabled: true}
   - {key: age_share_45_64,      source: age_share_45_64,      label: 年齢構成比 45-64歳,         group: people, kind: share,    enabled: true}
   - {key: age_share_65plus,     source: age_share_65plus,     label: 年齢構成比 65歳以上,        group: people, kind: share,    enabled: true}
-  # 会員の10歳刻みと突き合わせるための年齢区分（軸には使わず、ズレ分析専用）
-  - {key: age_cmp_15_29,        source: age_cmp_15_29,        label: 商圏年齢 15-29歳,           group: people, kind: share,    enabled: true}
-  - {key: age_cmp_30_49,        source: age_cmp_30_49,        label: 商圏年齢 30-49歳,           group: people, kind: share,    enabled: true}
-  - {key: age_cmp_50_69,        source: age_cmp_50_69,        label: 商圏年齢 50-69歳,           group: people, kind: share,    enabled: true}
-  - {key: age_cmp_70plus,       source: age_cmp_70plus,       label: 商圏年齢 70歳以上,          group: people, kind: share,    enabled: true}
+  # 商圏の10歳刻み年齢構成。国勢調査の5歳階級をそのまま足せるので会員区分と完全に一致する。
+  # 軸には使わず、顧客層（年代別）の予測とズレ分析に使う。
+  - {key: age_dec_0s,           source: age_dec_0s,           label: 商圏年齢 0-9歳,             group: people, kind: share,    enabled: true}
+  - {key: age_dec_10s,          source: age_dec_10s,          label: 商圏年齢 10代,              group: people, kind: share,    enabled: true}
+  - {key: age_dec_20s,          source: age_dec_20s,          label: 商圏年齢 20代,              group: people, kind: share,    enabled: true}
+  - {key: age_dec_30s,          source: age_dec_30s,          label: 商圏年齢 30代,              group: people, kind: share,    enabled: true}
+  - {key: age_dec_40s,          source: age_dec_40s,          label: 商圏年齢 40代,              group: people, kind: share,    enabled: true}
+  - {key: age_dec_50s,          source: age_dec_50s,          label: 商圏年齢 50代,              group: people, kind: share,    enabled: true}
+  - {key: age_dec_60s,          source: age_dec_60s,          label: 商圏年齢 60代,              group: people, kind: share,    enabled: true}
+  - {key: age_dec_70plus,       source: age_dec_70plus,       label: 商圏年齢 70代以上,          group: people, kind: share,    enabled: true}
   - {key: hh_share_single,      source: hh_share_single,      label: 単身世帯比率,               group: people, kind: share,    enabled: true}
   - {key: hh_share_with_child,  source: hh_share_with_child,  label: 6歳未満同居世帯比率,        group: people, kind: share,    enabled: true}
   - {key: hh_share_senior,      source: hh_share_senior,      label: 65歳以上同居世帯比率,       group: people, kind: share,    enabled: true}
@@ -60,7 +65,7 @@ variables:
   - {key: station_daily_users,  source: station_daily_users,  label: 最寄駅1日乗降客数,          group: access, kind: scale,    enabled: true}
   - {key: frontage_traffic,     source: frontage_traffic,     label: 前面道路12h交通量,          group: access, kind: scale,    enabled: true}
 
-  # ---------- C. 競合 ----------
+  # ---------- C. 競合（店舗名での地図・Web検索で埋める） ----------
   - {key: comp_sm_1km,          source: comp_sm_1km,          label: 競合SM数(1km内),            group: competition, kind: count,    enabled: true}
   - {key: comp_sm_3km,          source: comp_sm_3km,          label: 競合SM数(3km内),            group: competition, kind: count,    enabled: true}
   - {key: comp_cvs_1km,         source: comp_cvs_1km,         label: 競合CVS数(1km内),           group: competition, kind: count,    enabled: true}
@@ -70,7 +75,7 @@ variables:
   - {key: nearest_comp_price,   source: nearest_comp_price,   label: 最寄競合の価格帯(1低-5高),  group: competition, kind: score,    enabled: true}
   - {key: own_store_overlap,    source: own_store_overlap,    label: 自社他店との商圏重なり率,   group: competition, kind: share,    enabled: true}
 
-  # ---------- D. 周辺施設 ----------
+  # ---------- D. 周辺施設（店舗名での地図・Web検索で埋める） ----------
   - {key: fac_school,           source: fac_school,           label: 小中学校数,                 group: facility, kind: count, enabled: true}
   - {key: fac_nursery,          source: fac_nursery,          label: 保育園・幼稚園数,           group: facility, kind: count, enabled: true}
   - {key: fac_university,       source: fac_university,       label: 大学・専門学校数,           group: facility, kind: count, enabled: true}
@@ -131,16 +136,20 @@ urban_rural:
     - {variable: housing_share_apart, rural_at: 0.25, urban_at: 0.85, weight: 0.5}
 
 # ============================================================
-# 会員構成比と商圏年齢構成の突き合わせ
-#   会員は10歳刻み、商圏統計は5歳刻み。両方を割り切れる区切りで揃える。
-#   member 側の区分を変えたら、ここと age_cmp_* の定義の両方を直すこと。
+# 会員の年代構成と商圏年齢構成の対応
+#   会員は10歳刻み。商圏統計の5歳階級をそのまま足すと完全に一致する。
+#   性別は「不明」が一定量あり信用できないため、全体で合算して扱う（gender列は無視）。
+#   会員に0-9歳はいないので、商圏側は10代以上で再正規化して比較する。
 # ============================================================
+use_gender: false
 member_compare_buckets:
-  "15-29歳":  {member: ["10代", "20代"],   area: [age_cmp_15_29]}
-  "30-49歳":  {member: ["30代", "40代"],   area: [age_cmp_30_49]}
-  "50-69歳":  {member: ["50代", "60代"],   area: [age_cmp_50_69]}
-  "70歳以上": {member: ["70代以上"],        area: [age_cmp_70plus]}
-# 注: 会員の「10代」には15歳未満が含まれないため、15-29歳の比較はやや会員側が低く出ます。
+  "10代":    {member: ["10代"],    area: [age_dec_10s]}
+  "20代":    {member: ["20代"],    area: [age_dec_20s]}
+  "30代":    {member: ["30代"],    area: [age_dec_30s]}
+  "40代":    {member: ["40代"],    area: [age_dec_40s]}
+  "50代":    {member: ["50代"],    area: [age_dec_50s]}
+  "60代":    {member: ["60代"],    area: [age_dec_60s]}
+  "70代以上": {member: ["70代以上"], area: [age_dec_70plus]}
 
 # ============================================================
 # レポート設定
