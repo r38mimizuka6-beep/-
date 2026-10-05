@@ -27,7 +27,7 @@ from shoken.verify import save_predictions, verify_predictions  # noqa: E402
 CFG = ROOT / "config" / "columns.yaml"
 MCFG = ROOT / "config" / "metrics.yaml"
 S = ROOT / "data" / "sample"
-IDPOS = [S / "idpos_qty_sample.csv.gz", S / "idpos_age_sample.csv.gz"]
+IDPOS = S / "idpos_sample.csv.gz"   # 年代・数量・客数が1本に入った実データ想定
 
 
 @pytest.fixture(scope="module")
@@ -321,8 +321,7 @@ def test_verify_round_trip(analysis, mcfg, tmp_path):
     p = save_predictions(analysis.predictions, store_name=analysis.new_name,
                          store_id=analysis.new_id, path=tmp_path / "pred.json",
                          axis_weights=analysis.similarity.weights)
-    actual = load_idpos([S / "idpos_qty_newstore_actual.csv.gz",
-                         S / "idpos_age_newstore_actual.csv.gz"],
+    actual = load_idpos(S / "idpos_newstore_actual.csv.gz",
                         S / "ure_zaiko_newstore_actual.csv.gz", mcfg, level="category")
     v = verify_predictions(p, actual, mcfg, analysis.idpos)
     assert v.rows
@@ -335,7 +334,7 @@ def test_verify_round_trip(analysis, mcfg, tmp_path):
 def test_verify_holds_judgement_when_too_few_weeks(analysis, mcfg, tmp_path):
     import gzip
     import io
-    raw = gzip.decompress((S / "idpos_qty_newstore_actual.csv.gz").read_bytes()).decode("cp932")
+    raw = gzip.decompress((S / "idpos_newstore_actual.csv.gz").read_bytes()).decode("cp932")
     df = pd.read_csv(io.StringIO(raw), dtype=str)
     weeks = sorted(df["年週"].unique())[:3]          # 3週だけ = 除外後1週
     small = tmp_path / "small.csv"
@@ -481,16 +480,49 @@ def test_pi_decomposition_identity(mcfg):
     assert checked >= 5
 
 
-def test_only_one_file_supplies_totals(mcfg):
-    """2本読んでも売上が二重計上されないこと。"""
-    one = load_idpos([S / "idpos_qty_sample.csv.gz"], S / "ure_zaiko_sample.csv.gz",
-                     mcfg, level="line", opening_dates=OPENS)
-    two = load_idpos(IDPOS, S / "ure_zaiko_sample.csv.gz", mcfg, level="line",
+def test_splitting_one_export_into_two_does_not_double_count(mcfg, tmp_path):
+    """同じ売上を2本に分けて渡しても、合計が増えないこと。"""
+    import gzip
+    import io
+    raw = gzip.decompress((S / "idpos_sample.csv.gz").read_bytes()).decode("cp932")
+    df = pd.read_csv(io.StringIO(raw), dtype=str)
+    age_only = df.drop(columns=["売上数量", "POS客数", "ID客数"])
+    p2 = tmp_path / "age_only.csv"
+    age_only.to_csv(p2, index=False, encoding="cp932")
+
+    one = load_idpos(IDPOS, S / "ure_zaiko_sample.csv.gz", mcfg, level="line",
+                     opening_dates=OPENS)
+    two = load_idpos([IDPOS, p2], S / "ure_zaiko_sample.csv.gz", mcfg, level="line",
                      opening_dates=OPENS)
     for unit in one.units:
-        a_, b_ = one.value("0101", unit, "pi"), two.value("0101", unit, "pi")
-        assert a_ == pytest.approx(b_, rel=1e-6), unit
-    assert two.age_bands and not one.age_bands
+        assert one.value("0101", unit, "pi") == pytest.approx(
+            two.value("0101", unit, "pi"), rel=1e-6), unit
+
+
+def test_subtotal_rows_are_dropped(mcfg, tmp_path):
+    """年代=計 のような小計行が混ざっても、売上が二重に数えられないこと。"""
+    import gzip
+    import io
+    raw = gzip.decompress((S / "idpos_sample.csv.gz").read_bytes()).decode("cp932")
+    df = pd.read_csv(io.StringIO(raw), dtype=str)
+    clean = tmp_path / "clean.csv"
+    df.to_csv(clean, index=False, encoding="cp932")
+
+    num = ["売上数量", "売上税抜金額(円)", "POS客数", "ID客数", "PI値"]
+    keys = [c for c in df.columns if c not in num + ["年代"]]
+    subtotal = (df.assign(**{c: pd.to_numeric(df[c]) for c in num})
+                .groupby(keys, as_index=False)[num].sum().assign(年代="計"))
+    dirty = tmp_path / "dirty.csv"
+    pd.concat([df, subtotal[df.columns]]).to_csv(dirty, index=False, encoding="cp932")
+
+    a = load_idpos(clean, S / "ure_zaiko_sample.csv.gz", mcfg, level="line",
+                   opening_dates=OPENS)
+    b = load_idpos(dirty, S / "ure_zaiko_sample.csv.gz", mcfg, level="line",
+                   opening_dates=OPENS)
+    assert any("小計・合計" in w for w in b.warnings)
+    for unit in a.units:
+        assert a.value("0101", unit, "pi") == pytest.approx(
+            b.value("0101", unit, "pi"), rel=1e-6), f"{unit} で二重計上"
 
 
 def test_unit_price_is_plausible(mcfg):
@@ -550,9 +582,9 @@ def conversion_analysis():
         master_path=S / "store_master.csv", new_store_path=S / "new_store.csv",
         idpos_path=IDPOS,
         margin_path=S / "ure_zaiko_sample.csv.gz",
-        prior_idpos_path=S / "idpos_qty_prior_sample.csv.gz",
+        prior_idpos_path=S / "idpos_prior_sample.csv.gz",
         prior_margin_path=S / "ure_zaiko_prior_sample.csv.gz",
-        baseline_idpos_path=S / "idpos_qty_newstore_baseline.csv.gz",
+        baseline_idpos_path=S / "idpos_newstore_baseline.csv.gz",
         baseline_margin_path=S / "ure_zaiko_newstore_baseline.csv.gz",
         level="line", level_scan=False,
     )
@@ -626,7 +658,7 @@ def test_age_mix_falls_back_to_parent_when_age_export_is_shallower(mcfg, tmp_pat
     """年代つきエクスポートがサブカテゴリーまでしか無くても、セグメント粒度で動くこと。"""
     import gzip
     import io
-    raw = gzip.decompress((S / "idpos_age_sample.csv.gz").read_bytes()).decode("cp932")
+    raw = gzip.decompress((S / "idpos_sample.csv.gz").read_bytes()).decode("cp932")
     df = pd.read_csv(io.StringIO(raw), dtype=str)
     # セグメント列を落として「浅いエクスポート」を作る
     shallow = df.drop(columns=["セグメントCD", "セグメント"])
@@ -638,10 +670,33 @@ def test_age_mix_falls_back_to_parent_when_age_export_is_shallower(mcfg, tmp_pat
     path = tmp_path / "age_shallow.csv"
     shallow.to_csv(path, index=False, encoding="cp932")
 
-    d = load_idpos([S / "idpos_qty_sample.csv.gz", path],
+    d = load_idpos([IDPOS, path],
                    S / "ure_zaiko_sample.csv.gz", mcfg, level="segment",
                    opening_dates=OPENS)
     assert d.age_bands
     seg = next(u for u in d.units if u.count(" > ") == 4)
     mix = d.store_age_mix("0101", seg)
     assert mix and abs(sum(mix.values()) - 1.0) < 1e-6, "親に遡れていない"
+
+
+def test_maturity_counts_weeks_not_rows(mcfg):
+    """成熟度の週数が、単位数で水増しされていないこと。"""
+    d = load_idpos(IDPOS, S / "ure_zaiko_sample.csv.gz", mcfg, level="category",
+                   opening_dates=OPENS)
+    n_units = len(d.units)
+    assert n_units > 5
+    for _, r in d.maturity.iterrows():
+        assert r["weeks_excluded"] <= 10, "行数を週数として数えている"
+        assert r["weeks_total"] <= 60
+        assert r["weeks_used"] == r["weeks_total"] - r["weeks_excluded"]
+
+
+def test_customers_robust_to_pi_rounding(mcfg):
+    """年代別に割れてPI値が丸められても、客数の復元が崩れないこと。"""
+    d = load_idpos(IDPOS, S / "ure_zaiko_sample.csv.gz", mcfg, level="category",
+                   opening_dates=OPENS)
+    assert not any("復元した客数" in w for w in d.warnings)
+    cust = d.panel_all.dropna(subset=["customers"])
+    # 店舗×週で1つの値に揃っていること
+    spread = cust.groupby(["store_id", "year", "week"])["customers"].nunique()
+    assert (spread == 1).all()

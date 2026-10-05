@@ -268,11 +268,9 @@ _BASE = ["年週", "ゾーンCD", "ゾーン", "エリアCD", "エリア", "チ�
          "店舗CD", "店舗", "事業部CD", "事業部", "ディビジョンCD", "ディビジョン",
          "ラインCD", "ライン", "部門CD", "部門", "カテゴリーCD", "カテゴリー",
          "サブカテゴリーCD", "サブカテゴリー", "セグメントCD", "セグメント"]
-# 数量・客数つきエクスポート
-QTY_COLS = _BASE + ["顧客種類", "売上数量", "売上税抜金額(円)",
+# 実データのエクスポート（年代・数量・客数が1本に入る）
+QTY_COLS = _BASE + ["顧客種類", "年代", "売上数量", "売上税抜金額(円)",
                     "POS客数", "ID客数", "PI値"]
-# 年代つきエクスポート
-AGE_COLS = _BASE + ["顧客種類", "年代", "売上税抜金額(円)", "PI値"]
 MG_COLS = ["年週", "ゾーンCD", "ゾーン名", "エリアCD", "エリア名", "店舗CD", "店舗名",
            "ディビジョンCD", "ディビジョン名", "ラインCD", "ライン名",
            "部門CD", "部門名", "カテゴリーCD", "カテゴリー名",
@@ -299,7 +297,7 @@ def main() -> None:
     today = _dt.date(2026, 10, 2)
     weeks = [(y, w) for (y, w) in weeks if week_monday(y, w) <= today]
 
-    qty_rows, age_rows, mg_rows = [], [], []
+    qty_rows, mg_rows = [], []
 
     def emit(store: dict, zrow, weeks_for_store=None) -> None:
         weeks_ = weeks_for_store or weeks
@@ -356,22 +354,24 @@ def main() -> None:
                                 f"{li:04d}", line, f"{li:04d}", dept,
                                 f"{li:04d}{si}", cat, f"{si:04d}", sub,
                                 f"{gi:04d}", seg)
-                        # ビュー1: 数量・客数つき（年代なし）
-                        qty_rows.append(meta + ("会員", int(round(qty)),
-                                                int(round(sales_total)), buyers,
-                                                int(buyers * 0.83),
-                                                round(qty / week_cust * 1000, 3)))
-                        # ビュー2: 年代つき（数量・客数なし）
+                        # 1本のエクスポートに年代・数量・客数をすべて入れる
                         wk_w = np.clip(w_age * rng.normal(1.0, 0.04, size=len(w_age)),
                                        1e-6, None)
                         wk_w = wk_w / wk_w.sum()
+                        pi_unit = qty / week_cust * 1000
                         for b, ww in zip(AGE_BANDS, wk_w):
-                            age_rows.append(meta + ("会員", b,
+                            qty_rows.append(meta + ("会員", b,
+                                                    int(round(qty * ww)),
                                                     int(round(sales_total * ww)),
-                                                    round(qty / week_cust * 1000 * ww, 3)))
-                        age_rows.append(meta + ("非会員", "不明",
+                                                    int(round(buyers * ww)),
+                                                    int(round(buyers * ww * 0.83)),
+                                                    round(pi_unit * ww, 3)))
+                        # 非会員は年代が取れない
+                        qty_rows.append(meta + ("非会員", "不明",
+                                                int(round(qty * 0.22)),
                                                 int(round(sales_total * 0.22)),
-                                                round(qty / week_cust * 1000 * 0.22, 3)))
+                                                int(round(buyers * 0.22)), 0,
+                                                round(pi_unit * 0.22, 3)))
                         gm = float(np.clip(gm_store * gm_f * rng.normal(1.0, 0.035),
                                            0.05, 0.60))
                         mg_rows.append((
@@ -391,7 +391,6 @@ def main() -> None:
     emit(NEW_STORE, z_new, future)
 
     qty_df = pd.DataFrame(qty_rows, columns=QTY_COLS)
-    age_df = pd.DataFrame(age_rows, columns=AGE_COLS)
     mg_df = pd.DataFrame(mg_rows, columns=MG_COLS)
 
     opens = {s["store_id"]: _dt.date.fromisoformat(
@@ -402,9 +401,8 @@ def main() -> None:
     def monday_of(yw: str) -> _dt.date:
         return week_monday(int(yw[:4]), int(yw[4:]))
 
-    for df in (qty_df, age_df):
-        df["_d"] = df["年週"].map(monday_of)
-        df["_post"] = [d >= opens[c] for d, c in zip(df["_d"], df["店舗CD"])]
+    qty_df["_d"] = qty_df["年週"].map(monday_of)
+    qty_df["_post"] = [d >= opens[c] for d, c in zip(qty_df["_d"], qty_df["店舗CD"])]
     mg_df["_d"] = mg_df["年週"].map(
         lambda v: week_monday(int(v.split("年")[0]), int(v.split("年")[1].rstrip("週"))))
     mg_df["_post"] = [d >= opens[c] for d, c in zip(mg_df["_d"], mg_df["店舗CD"])]
@@ -413,33 +411,27 @@ def main() -> None:
         df.loc[mask, cols].to_csv(OUT / name, index=False, encoding="cp932")
         return int(mask.sum())
 
-    ex_q, ex_a, ex_m = (qty_df["店舗CD"] != nid, age_df["店舗CD"] != nid,
-                        mg_df["店舗CD"] != nid)
+    ex_q, ex_m = qty_df["店舗CD"] != nid, mg_df["店舗CD"] != nid
     out = [
-        ("idpos_qty_sample.csv.gz",
-         dump(qty_df, ex_q & qty_df["_post"], QTY_COLS, "idpos_qty_sample.csv.gz")),
-        ("idpos_age_sample.csv.gz",
-         dump(age_df, ex_a & age_df["_post"], AGE_COLS, "idpos_age_sample.csv.gz")),
+        ("idpos_sample.csv.gz",
+         dump(qty_df, ex_q & qty_df["_post"], QTY_COLS, "idpos_sample.csv.gz")),
         ("ure_zaiko_sample.csv.gz",
          dump(mg_df, ex_m & mg_df["_post"], MG_COLS, "ure_zaiko_sample.csv.gz")),
-        ("idpos_qty_newstore_actual.csv.gz",
+        ("idpos_newstore_actual.csv.gz",
          dump(qty_df, ~ex_q & qty_df["_post"], QTY_COLS,
-              "idpos_qty_newstore_actual.csv.gz")),
-        ("idpos_age_newstore_actual.csv.gz",
-         dump(age_df, ~ex_a & age_df["_post"], AGE_COLS,
-              "idpos_age_newstore_actual.csv.gz")),
+              "idpos_newstore_actual.csv.gz")),
         ("ure_zaiko_newstore_actual.csv.gz",
          dump(mg_df, ~ex_m & mg_df["_post"], MG_COLS,
               "ure_zaiko_newstore_actual.csv.gz")),
         # 転換前データ。実運用では手元に無い前提だが、転換前後法の動作確認用に出す。
-        ("idpos_qty_prior_sample.csv.gz",
+        ("idpos_prior_sample.csv.gz",
          dump(qty_df, ex_q & ~qty_df["_post"], QTY_COLS,
-              "idpos_qty_prior_sample.csv.gz")),
+              "idpos_prior_sample.csv.gz")),
         ("ure_zaiko_prior_sample.csv.gz",
          dump(mg_df, ex_m & ~mg_df["_post"], MG_COLS, "ure_zaiko_prior_sample.csv.gz")),
-        ("idpos_qty_newstore_baseline.csv.gz",
+        ("idpos_newstore_baseline.csv.gz",
          dump(qty_df, ~ex_q & ~qty_df["_post"], QTY_COLS,
-              "idpos_qty_newstore_baseline.csv.gz")),
+              "idpos_newstore_baseline.csv.gz")),
         ("ure_zaiko_newstore_baseline.csv.gz",
          dump(mg_df, ~ex_m & ~mg_df["_post"], MG_COLS,
               "ure_zaiko_newstore_baseline.csv.gz")),

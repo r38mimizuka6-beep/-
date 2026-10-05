@@ -246,8 +246,7 @@ def main(argv: list[str] | None = None) -> int:
                 config_path=CFG, metrics_path=MCFG,
                 master_path=SAMPLE / "store_master.csv",
                 new_store_path=SAMPLE / "new_store.csv",
-                idpos_path=[SAMPLE / "idpos_qty_sample.csv.gz",
-                            SAMPLE / "idpos_age_sample.csv.gz"],
+                idpos_path=SAMPLE / "idpos_sample.csv.gz",
                 margin_path=SAMPLE / "ure_zaiko_sample.csv.gz",
                 level=args.level,
                 weight_overrides=_weights(args.weight),
@@ -287,8 +286,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "demo" and not getattr(args, "skip_verify", False):
         from .idpos import load_idpos
         from .verify import verify_predictions
-        actual = load_idpos([SAMPLE / "idpos_qty_newstore_actual.csv.gz",
-                             SAMPLE / "idpos_age_newstore_actual.csv.gz"],
+        actual = load_idpos(SAMPLE / "idpos_newstore_actual.csv.gz",
                             SAMPLE / "ure_zaiko_newstore_actual.csv.gz",
                             a.mcfg, level=a.idpos.level)
         v = verify_predictions(pred_path, actual, a.mcfg, a.idpos)

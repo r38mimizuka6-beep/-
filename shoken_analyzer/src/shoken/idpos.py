@@ -264,6 +264,7 @@ def load_idpos(
 
     div_filter = spec.get("division_filter") or []
     views = [(path, _prep(df)) for path, df in views]
+    views = [(path, _drop_total_rows(df, spec, path, warnings)) for path, df in views]
     views = [(path, df) for path, df in views if not df.empty]
     if not views:
         raise InputError(
@@ -352,70 +353,31 @@ def load_idpos(
     # 行ごとに同じ値になるはずなので、ばらつきはデータの異常を示す。
     store_customers = pd.DataFrame()
     if spec.get("derive_customers_from_pi", True) and pdf["quantity"].notna().any():
-        src = pdf[(pdf["pi"] > 0) & pdf["quantity"].notna()].copy()
-        src["_cust"] = src["quantity"] / src["pi"] * 1000
-        g = src.groupby(["store_id", "year", "week"])["_cust"]
-        store_customers = g.median().reset_index().rename(columns={"_cust": "customers"})
-        rel = (g.std() / g.median()).dropna()
-        if len(rel) and float(rel.median()) > 0.02:
-            warnings.append(
-                f"売上数量÷PI値から復元した客数が、同じ週の中で中央{float(rel.median()):.1%}"
-                "ばらついています。PI値の分母が明細ごとに違う可能性があります。"
-                "金額PI・粗利PIの解釈に注意してください。"
-            )
+        src = pdf[(pdf["pi"] > 0) & pdf["quantity"].notna()]
+        # 行ごとに割るとPI値の丸め（小数3桁）が効いてしまうので、
+        # 店舗×週で合計してから割る。
+        tot = src.groupby(["store_id", "year", "week"], as_index=False).agg(
+            _q=("quantity", "sum"), _pi=("pi", "sum")
+        )
+        tot = tot[tot["_pi"] > 0]
+        tot["customers"] = tot["_q"] / tot["_pi"] * 1000
+        store_customers = tot[["store_id", "year", "week", "customers"]]
 
-    # ---- 開店・改装直後の週を落とす ----
-    panel_all = agg.copy()
-    skip_w = int(spec.get("exclude_opening_weeks", 0)
-                 if exclude_opening_weeks is None else exclude_opening_weeks)
-    maturity_rows = []
-    if opening_dates:
-        keep = pd.Series(True, index=agg.index)
-        for sid, g in agg.groupby("store_id"):
-            od = opening_dates.get(str(sid))
-            od_ts, approx = parse_open_date(od)
-            total = len(g)
-            if pd.isna(od_ts):
-                maturity_rows.append({"store_id": sid, "open_date": None,
-                                      "approx": False,
-                                      "weeks_total": total, "weeks_excluded": 0,
-                                      "weeks_used": total, "weeks_since_open": None})
-                continue
-            cutoff = od_ts + pd.Timedelta(weeks=skip_w)
-            drop = g["week_date"].notna() & (g["week_date"] < cutoff)
-            keep.loc[g.index[drop]] = False
-            since = g["week_date"].max()
-            maturity_rows.append({
-                "store_id": sid, "open_date": od_ts.date().isoformat(),
-                "approx": approx,
-                "weeks_total": total, "weeks_excluded": int(drop.sum()),
-                "weeks_used": total - int(drop.sum()),
-                "weeks_since_open": (int((since - od_ts).days // 7)
-                                     if pd.notna(since) else None),
-            })
-        agg = agg[keep]
-        if skip_w:
-            warnings.append(
-                f"各店の開店・改装オープンから{skip_w}週間を水準の計算から外しました"
-                "（開店効果で水準が高く出るため）。"
-            )
-    maturity = pd.DataFrame(maturity_rows)
-    if not maturity.empty and "approx" in maturity.columns:
-        ap = maturity[maturity["approx"]]
-        if len(ap):
-            warnings.append(
-                f"{len(ap)}店は開店日が月単位（その月の1日として扱いました）。"
-                "実際の開店日が月末寄りだと、除外する週と立ち上がり補正の週がずれ、"
-                "その店の水準は最大で数%ずれます。日が分かり次第 open_date を直してください。"
-            )
-    if not maturity.empty:
-        thin = maturity[maturity["weeks_used"] < int(spec.get("min_weeks", 8))]
-        for _, r in thin.iterrows():
-            warnings.append(
-                f"店舗{r['store_id']}は開店効果を除いた週が{int(r['weeks_used'])}週しかありません"
-                f"（オープン{r['open_date']}）。この店の水準は不安定で、"
-                "類似店に選ばれた場合の予測も不安定になります。"
-            )
+        # 検算: 丸めの影響が小さい大きな行だけで同じ計算をして、合計と突き合わせる
+        big = src[src["quantity"] >= max(50, float(src["quantity"].quantile(0.9)))]
+        if len(big) > 20:
+            chk = big.assign(_c=big["quantity"] / big["pi"] * 1000).groupby(
+                ["store_id", "year", "week"])["_c"].median().reset_index()
+            cmp_ = chk.merge(store_customers, on=["store_id", "year", "week"])
+            if len(cmp_):
+                rel = ((cmp_["_c"] - cmp_["customers"]).abs()
+                       / cmp_["customers"]).median()
+                if float(rel) > 0.02:
+                    warnings.append(
+                        f"売上数量÷PI値から復元した客数が、明細単位と週合計で"
+                        f"中央{float(rel):.1%}食い違います。PI値の分母が明細ごとに"
+                        "違う可能性があります。金額PI・粗利PIの解釈に注意してください。"
+                    )
 
     # ---- 粗利ファイル ----
     if margin_path:
@@ -510,6 +472,62 @@ def load_idpos(
                 metric_keys.append(key)
     agg = agg.drop(columns=[c for c in ("_tot_sales", "_tot_gp") if c in agg.columns])
 
+    # ---- 開店・改装直後の週を落とす ----
+    # 派生指標まで計算し終えてから落とす。除外前のパネルは立ち上がりカーブの推定に使う。
+    panel_all = agg.copy()
+    skip_w = int(spec.get("exclude_opening_weeks", 0)
+                 if exclude_opening_weeks is None else exclude_opening_weeks)
+    maturity_rows = []
+    if opening_dates:
+        keep = pd.Series(True, index=agg.index)
+        for sid, g in agg.groupby("store_id"):
+            od = opening_dates.get(str(sid))
+            od_ts, approx = parse_open_date(od)
+            # 行数ではなく「週」の数で数える（1週に単位の数だけ行があるため）
+            total = int(g["week_date"].nunique())
+            if pd.isna(od_ts):
+                maturity_rows.append({"store_id": sid, "open_date": None,
+                                      "approx": False,
+                                      "weeks_total": total, "weeks_excluded": 0,
+                                      "weeks_used": total, "weeks_since_open": None})
+                continue
+            cutoff = od_ts + pd.Timedelta(weeks=skip_w)
+            drop = g["week_date"].notna() & (g["week_date"] < cutoff)
+            keep.loc[g.index[drop]] = False
+            since = g["week_date"].max()
+            n_dropped = int(g.loc[drop, "week_date"].nunique())
+            maturity_rows.append({
+                "store_id": sid, "open_date": od_ts.date().isoformat(),
+                "approx": approx,
+                "weeks_total": total, "weeks_excluded": n_dropped,
+                "weeks_used": total - n_dropped,
+                "weeks_since_open": (int((since - od_ts).days // 7)
+                                     if pd.notna(since) else None),
+            })
+        agg = agg[keep]
+        if skip_w:
+            warnings.append(
+                f"各店の開店・改装オープンから{skip_w}週間を水準の計算から外しました"
+                "（開店効果で水準が高く出るため）。"
+            )
+    maturity = pd.DataFrame(maturity_rows)
+    if not maturity.empty and "approx" in maturity.columns:
+        ap = maturity[maturity["approx"]]
+        if len(ap):
+            warnings.append(
+                f"{len(ap)}店は開店日が月単位（その月の1日として扱いました）。"
+                "実際の開店日が月末寄りだと、除外する週と立ち上がり補正の週がずれ、"
+                "その店の水準は最大で数%ずれます。日が分かり次第 open_date を直してください。"
+            )
+    if not maturity.empty:
+        thin = maturity[maturity["weeks_used"] < int(spec.get("min_weeks", 8))]
+        for _, r in thin.iterrows():
+            warnings.append(
+                f"店舗{r['store_id']}は開店効果を除いた週が{int(r['weeks_used'])}週しかありません"
+                f"（オープン{r['open_date']}）。この店の水準は不安定で、"
+                "類似店に選ばれた場合の予測も不安定になります。"
+            )
+
     # ---- 店舗 × 単位 × 指標 の集計 ----
     min_weeks = int(spec.get("min_weeks", 8))
     trim = float(spec.get("trim_ratio", 0.1))
@@ -549,6 +567,35 @@ def load_idpos(
         level=level, age_bands=age_bands, age_unknown_share=unknown_share,
         maturity=maturity, warnings=warnings,
     )
+
+
+def _drop_total_rows(df: pd.DataFrame, spec: dict, path, warnings: list[str]) -> pd.DataFrame:
+    """小計・合計行を落とす。
+
+    1本のファイルに年代の内訳と数量が同居する形式では、
+    「年代=計」のような小計行が混ざっていると売上が2倍になる。
+    """
+    labels = {str(x).strip() for x in (spec.get("total_row_labels") or [])}
+    if not labels or df.empty:
+        return df
+    mask = pd.Series(False, index=df.index)
+    hit_cols: list[str] = []
+    for col in ("customer_type", "age_band", "segment", "subcategory",
+                "category", "department", "line"):
+        if col not in df.columns:
+            continue
+        m = df[col].astype(str).str.strip().isin(labels)
+        if m.any():
+            mask |= m
+            hit_cols.append(col)
+    n = int(mask.sum())
+    if n:
+        warnings.append(
+            f"{Path(path).name} から小計・合計とみられる行を{n:,}件除外しました"
+            f"（{'、'.join(hit_cols)} が {'、'.join(sorted(labels & set(df[hit_cols].astype(str).stack().str.strip())))}）。"
+            "明細と二重に数えないためです。意図した明細が消えていないか確認してください。"
+        )
+    return df[~mask]
 
 
 def parse_open_date(value) -> tuple[pd.Timestamp, bool]:
