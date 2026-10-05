@@ -78,7 +78,8 @@ class RampResult:
 
 def _weeks_since_open(panel: pd.DataFrame, opening_dates: dict[str, str]) -> pd.DataFrame:
     df = panel.copy()
-    od = {k: pd.to_datetime(v, errors="coerce") for k, v in (opening_dates or {}).items()}
+    from .idpos import parse_open_date
+    od = {k: parse_open_date(v)[0] for k, v in (opening_dates or {}).items()}
     df["_open"] = df["store_id"].map(od)
     df["weeks_since_open"] = (
         (pd.to_datetime(df["week_date"]) - df["_open"]).dt.days // 7

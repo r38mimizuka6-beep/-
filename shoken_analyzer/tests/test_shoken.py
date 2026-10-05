@@ -402,8 +402,13 @@ def test_level_scan_degrades_or_holds(cfg, mcfg):
 
 # ---------------- 開店時期のばらつき ----------------
 
-OPENS = {"0101": "2025-11-28", "0102": "2026-02-20", "0103": "2026-04-17",
-         "0104": "2026-07-10", "0105": "2026-08-07"}
+def _opens() -> dict[str, str]:
+    """開店日はサンプルの商圏マスタから読む（ハードコードするとズレる）。"""
+    m = pd.read_csv(S / "store_master.csv", dtype={"store_id": str})
+    return dict(zip(m["store_id"], m["open_date"].astype(str)))
+
+
+OPENS = _opens()
 
 
 def test_opening_weeks_are_excluded(mcfg):
@@ -585,3 +590,33 @@ def test_conversion_section_rendered(conversion_analysis):
     assert "2-2. 転換前後法" in html
     assert "業態転換による変化率" in html
     assert "既存店の成熟度" in html
+
+
+# ---------------- 開店日の精度 ----------------
+
+@pytest.mark.parametrize("raw,expected,approx", [
+    ("2025-11-28", "2025-11-28", False),
+    ("2026-04", "2026-04-01", True),
+    ("2026/4", "2026-04-01", True),
+    ("202604", "2026-04-01", True),
+])
+def test_parse_open_date(raw, expected, approx):
+    from shoken.idpos import parse_open_date
+    ts, ap = parse_open_date(raw)
+    assert ts.date().isoformat() == expected
+    assert ap is approx
+
+
+def test_month_precision_open_date_is_flagged(mcfg):
+    d = load_idpos(IDPOS, S / "ure_zaiko_sample.csv.gz", mcfg, level="line",
+                   opening_dates=OPENS)
+    assert any("月単位" in w for w in d.warnings)
+    assert d.maturity["approx"].any()
+
+
+def test_conversion_unavailable_message_offers_archiving(analysis):
+    """転換前データが無いときは、次の転換に備える案内を出すこと。"""
+    html = render_html(analysis)
+    assert "転換前のIDPOSが残っておらず" in html
+    assert "今週から毎週そのまま保存" in html
+    assert any("今週から毎週保存" in c["item"] for c in analysis.checklist)

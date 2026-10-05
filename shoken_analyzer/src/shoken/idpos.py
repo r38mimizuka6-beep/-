@@ -357,10 +357,11 @@ def load_idpos(
         keep = pd.Series(True, index=agg.index)
         for sid, g in agg.groupby("store_id"):
             od = opening_dates.get(str(sid))
-            od_ts = pd.to_datetime(od, errors="coerce") if od else pd.NaT
+            od_ts, approx = parse_open_date(od)
             total = len(g)
             if pd.isna(od_ts):
                 maturity_rows.append({"store_id": sid, "open_date": None,
+                                      "approx": False,
                                       "weeks_total": total, "weeks_excluded": 0,
                                       "weeks_used": total, "weeks_since_open": None})
                 continue
@@ -370,6 +371,7 @@ def load_idpos(
             since = g["week_date"].max()
             maturity_rows.append({
                 "store_id": sid, "open_date": od_ts.date().isoformat(),
+                "approx": approx,
                 "weeks_total": total, "weeks_excluded": int(drop.sum()),
                 "weeks_used": total - int(drop.sum()),
                 "weeks_since_open": (int((since - od_ts).days // 7)
@@ -382,6 +384,14 @@ def load_idpos(
                 "（開店効果で水準が高く出るため）。"
             )
     maturity = pd.DataFrame(maturity_rows)
+    if not maturity.empty and "approx" in maturity.columns:
+        ap = maturity[maturity["approx"]]
+        if len(ap):
+            warnings.append(
+                f"{len(ap)}店は開店日が月単位（その月の1日として扱いました）。"
+                "実際の開店日が月末寄りだと、除外する週と立ち上がり補正の週がずれ、"
+                "その店の水準は最大で数%ずれます。日が分かり次第 open_date を直してください。"
+            )
     if not maturity.empty:
         thin = maturity[maturity["weeks_used"] < int(spec.get("min_weeks", 8))]
         for _, r in thin.iterrows():
@@ -523,6 +533,23 @@ def load_idpos(
         level=level, age_bands=age_bands, age_unknown_share=unknown_share,
         maturity=maturity, warnings=warnings,
     )
+
+
+def parse_open_date(value) -> tuple[pd.Timestamp, bool]:
+    """開店日を読む。日が分からない場合は 'YYYY-MM' で渡してよい。
+
+    その月の1日として扱い、概算であることを呼び出し側に返す。
+    概算だと立ち上がり補正の週インデックスが最大±2週ずれるので、
+    レポートにその旨を出す。
+    """
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return pd.NaT, False
+    s = str(value).strip().replace("/", "-")
+    if re.fullmatch(r"\d{4}-\d{1,2}", s):
+        return pd.to_datetime(s + "-01", errors="coerce"), True
+    if re.fullmatch(r"\d{6}", s):
+        return pd.to_datetime(f"{s[:4]}-{s[4:]}-01", errors="coerce"), True
+    return pd.to_datetime(s, errors="coerce"), False
 
 
 def _load_customers(path: str | Path, spec: dict, enc: str) -> pd.DataFrame:

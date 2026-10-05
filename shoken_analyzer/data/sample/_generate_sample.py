@@ -45,7 +45,7 @@ STORES = [
          sales_floor_sqm=980, fresh_strength=3, deli_strength=4, price_level=3,
          pb_ratio=0.11, store_format="都市型SM", weekly_customers=26_000),
 
-    dict(store_id="0102", store_name="駅前B店", kind="urban_office", open_date="2026-02-20",
+    dict(store_id="0102", store_name="駅前B店", kind="urban_office", open_date="2026-02",
          pop_total=98_400, pop_density=18_200, hh_total=62_100, hh_avg_size=1.58,
          age_share_0_14=0.072, age_share_15_29=0.268, age_share_30_44=0.271,
          age_share_45_64=0.250, age_share_65plus=0.139,
@@ -66,7 +66,7 @@ STORES = [
          sales_floor_sqm=620, fresh_strength=2, deli_strength=5, price_level=4,
          pb_ratio=0.08, store_format="駅前小型SM", weekly_customers=31_000),
 
-    dict(store_id="0103", store_name="住宅街C店", kind="urban_family", open_date="2026-04-17",
+    dict(store_id="0103", store_name="住宅街C店", kind="urban_family", open_date="2026-04",
          pop_total=142_600, pop_density=9_400, hh_total=58_900, hh_avg_size=2.42,
          age_share_0_14=0.148, age_share_15_29=0.166, age_share_30_44=0.248,
          age_share_45_64=0.277, age_share_65plus=0.161,
@@ -87,7 +87,7 @@ STORES = [
          sales_floor_sqm=1_380, fresh_strength=4, deli_strength=3, price_level=3,
          pb_ratio=0.14, store_format="郊外型SM（市街地）", weekly_customers=24_000),
 
-    dict(store_id="0104", store_name="旧市街D店", kind="urban_senior", open_date="2026-07-10",
+    dict(store_id="0104", store_name="旧市街D店", kind="urban_senior", open_date="2026-07",
          pop_total=88_200, pop_density=11_100, hh_total=44_600, hh_avg_size=1.98,
          age_share_0_14=0.089, age_share_15_29=0.151, age_share_30_44=0.196,
          age_share_45_64=0.284, age_share_65plus=0.280,
@@ -108,7 +108,7 @@ STORES = [
          sales_floor_sqm=860, fresh_strength=4, deli_strength=3, price_level=2,
          pb_ratio=0.17, store_format="都市型SM", weekly_customers=18_000),
 
-    dict(store_id="0105", store_name="郊外E店", kind="rural_car", open_date="2026-08-07",
+    dict(store_id="0105", store_name="郊外E店", kind="rural_car", open_date="2026-08",
          pop_total=46_300, pop_density=1_850, hh_total=17_200, hh_avg_size=2.69,
          age_share_0_14=0.132, age_share_15_29=0.138, age_share_30_44=0.213,
          age_share_45_64=0.288, age_share_65plus=0.229,
@@ -131,7 +131,7 @@ STORES = [
 ]
 
 NEW_STORE = dict(
-    store_id="0199", store_name="新店（仮称）○○店", kind="new", open_date="2026-11-20",
+    store_id="0199", store_name="新店（仮称）○○店", kind="new", open_date="2026-11",
     pop_total=168_900, pop_density=12_300, hh_total=81_400, hh_avg_size=2.07,
     age_share_0_14=0.124, age_share_15_29=0.198, age_share_30_44=0.251,
     age_share_45_64=0.265, age_share_65plus=0.162,
@@ -306,7 +306,8 @@ def main() -> None:
         cust = store["weekly_customers"]
         # 客数は店舗×週で1つ。明細ごとに振ると PI の分母が揃わなくなる。
         week_customers = {yw: int(cust * rng.normal(1.0, 0.06)) for yw in weeks_}
-        opened = _dt.date.fromisoformat(store["open_date"])
+        _od = store["open_date"]
+        opened = _dt.date.fromisoformat(_od if len(_od) > 7 else _od + "-01")
         # 店ごとの転換効果のゆらぎ
         conv_jitter = {line: rng.normal(1.0, 0.08) for line, *_ in
                        {(h[0],) for h in HIER}}
@@ -393,8 +394,9 @@ def main() -> None:
     age_df = pd.DataFrame(age_rows, columns=AGE_COLS)
     mg_df = pd.DataFrame(mg_rows, columns=MG_COLS)
 
-    opens = {s["store_id"]: _dt.date.fromisoformat(s["open_date"])
-             for s in STORES + [NEW_STORE]}
+    opens = {s["store_id"]: _dt.date.fromisoformat(
+        s["open_date"] if len(s["open_date"]) > 7 else s["open_date"] + "-01")
+        for s in STORES + [NEW_STORE]}
     nid = NEW_STORE["store_id"]
 
     def monday_of(yw: str) -> _dt.date:
