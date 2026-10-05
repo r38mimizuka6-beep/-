@@ -67,7 +67,8 @@ def build_parser() -> argparse.ArgumentParser:
     common(r)
     r.add_argument("--master", required=True, help="既存店の商圏マスタ CSV/Excel")
     r.add_argument("--new", required=True, help="新店の商圏情報（1行）")
-    r.add_argument("--idpos", required=True, help="既存店の週次IDPOS CSV")
+    r.add_argument("--idpos", required=True, nargs="+",
+                   help="既存店の週次IDPOS CSV（種類が複数あるなら並べて渡す）")
     r.add_argument("--margin", help="既存店の週次 売上在庫（粗利）CSV")
     r.add_argument("--customers", help="店舗CD×年週×レジ通過客数のCSV（任意。渡すと粗利PIが出せる）")
     r.add_argument("--prior-idpos", help="既存店の【業態転換前】の週次IDPOS")
@@ -88,9 +89,10 @@ def build_parser() -> argparse.ArgumentParser:
     v = sub.add_parser("verify", help="保存した予測と新店の実績を突き合わせる")
     common(v)
     v.add_argument("--prediction", required=True, help="report で保存された予測JSON")
-    v.add_argument("--idpos", required=True, help="新店の週次IDPOS")
+    v.add_argument("--idpos", required=True, nargs="+", help="新店の週次IDPOS")
     v.add_argument("--margin", help="新店の週次 売上在庫（粗利）")
-    v.add_argument("--ref-idpos", required=True, help="既存店の週次IDPOS（季節指数を借りる）")
+    v.add_argument("--ref-idpos", required=True, nargs="+",
+                   help="既存店の週次IDPOS（季節指数を借りる）")
     v.add_argument("--ref-margin", help="既存店の週次 売上在庫")
     v.add_argument("--level", choices=LEVEL_CHOICES)
     v.add_argument("--out", default="output/verify.html")
@@ -99,7 +101,7 @@ def build_parser() -> argparse.ArgumentParser:
     w = sub.add_parser("weights", help="軸の重みを振ってLOO誤差の変化を見る")
     common(w)
     w.add_argument("--master", required=True)
-    w.add_argument("--idpos", required=True)
+    w.add_argument("--idpos", required=True, nargs="+")
     w.add_argument("--margin")
     w.add_argument("--level", choices=LEVEL_CHOICES)
 
@@ -244,15 +246,9 @@ def main(argv: list[str] | None = None) -> int:
                 config_path=CFG, metrics_path=MCFG,
                 master_path=SAMPLE / "store_master.csv",
                 new_store_path=SAMPLE / "new_store.csv",
-                idpos_path=SAMPLE / "idpos_sample.csv.gz",
+                idpos_path=[SAMPLE / "idpos_qty_sample.csv.gz",
+                            SAMPLE / "idpos_age_sample.csv.gz"],
                 margin_path=SAMPLE / "ure_zaiko_sample.csv.gz",
-                customers_path=SAMPLE / "customers_sample.csv.gz",
-                prior_idpos_path=SAMPLE / "idpos_prior_sample.csv.gz",
-                prior_margin_path=SAMPLE / "ure_zaiko_prior_sample.csv.gz",
-                prior_customers_path=SAMPLE / "customers_prior_sample.csv.gz",
-                baseline_idpos_path=SAMPLE / "idpos_newstore_baseline.csv.gz",
-                baseline_margin_path=SAMPLE / "ure_zaiko_newstore_baseline.csv.gz",
-                baseline_customers_path=SAMPLE / "customers_newstore.csv.gz",
                 level=args.level,
                 weight_overrides=_weights(args.weight),
                 level_scan=not args.no_level_scan,
@@ -291,7 +287,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "demo" and not getattr(args, "skip_verify", False):
         from .idpos import load_idpos
         from .verify import verify_predictions
-        actual = load_idpos(SAMPLE / "idpos_newstore_actual.csv.gz",
+        actual = load_idpos([SAMPLE / "idpos_qty_newstore_actual.csv.gz",
+                             SAMPLE / "idpos_age_newstore_actual.csv.gz"],
                             SAMPLE / "ure_zaiko_newstore_actual.csv.gz",
                             a.mcfg, level=a.idpos.level)
         v = verify_predictions(pred_path, actual, a.mcfg, a.idpos)

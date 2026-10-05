@@ -14,6 +14,7 @@ from . import checklist as checklist_mod
 from . import customers as customers_mod
 from . import direction as direction_mod
 from . import rangecheck as range_mod
+from . import ramp as ramp_mod
 from . import risk as risk_mod
 from .conversion import ConversionResult, compare_methods, run_conversion
 from .config import Config
@@ -47,6 +48,7 @@ class Analysis:
     checklist: list[dict]
     peers: list[Any]
     level_scan: pd.DataFrame
+    ramp: ramp_mod.RampResult | None = None
     conversion: ConversionResult | None = None
     method_compare: pd.DataFrame = field(default_factory=pd.DataFrame)
     customers_known: bool = False
@@ -119,6 +121,20 @@ def run_analysis(
             "転換時期が店ごとに違う場合、開店直後の需要が水準に混ざり、"
             "店舗間の比較が歪みます。必ず入れてください。"
         )
+
+    # ---- 立ち上がりカーブ ----
+    # 開店から日が浅い店を切り捨てず、成熟水準に割り戻して使えるようにする。
+    ramp = None
+    if opens:
+        curves = ramp_mod.estimate_ramp(idpos, opens)
+        ramp = ramp_mod.apply_ramp(idpos, opens, curves)
+        n = ramp_mod.apply_to_idpos(idpos, ramp)
+        warnings += ramp.warnings
+        if n:
+            warnings.append(
+                f"{n}件の店舗×単位に立ち上がり補正を当て、"
+                f"{len(ramp.adjusted_stores)}店を予測の材料に戻しました。"
+            )
 
     # 店舗CDの突き合わせ
     master_ids = set(stores[cfg.id_key].astype(str))
@@ -244,7 +260,7 @@ def run_analysis(
         ranges=ranges, confidence=confidence, loo=loo, predictions=predictions,
         age_mix=age_mix, age_mix_by_unit=age_by_unit, risks=risks,
         directions=directions, rural_gaps=rural_gaps, checklist=chk,
-        peers=peers, level_scan=scan, conversion=conversion,
+        peers=peers, level_scan=scan, ramp=ramp, conversion=conversion,
         method_compare=compare,
         customers_known=("gp_pi" in idpos.metrics),
         warnings=warnings,

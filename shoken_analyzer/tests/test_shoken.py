@@ -27,6 +27,7 @@ from shoken.verify import save_predictions, verify_predictions  # noqa: E402
 CFG = ROOT / "config" / "columns.yaml"
 MCFG = ROOT / "config" / "metrics.yaml"
 S = ROOT / "data" / "sample"
+IDPOS = [S / "idpos_qty_sample.csv.gz", S / "idpos_age_sample.csv.gz"]
 
 
 @pytest.fixture(scope="module")
@@ -44,7 +45,7 @@ def analysis():
     return run_analysis(
         config_path=CFG, metrics_path=MCFG,
         master_path=S / "store_master.csv", new_store_path=S / "new_store.csv",
-        idpos_path=S / "idpos_sample.csv.gz", margin_path=S / "ure_zaiko_sample.csv.gz",
+        idpos_path=IDPOS, margin_path=S / "ure_zaiko_sample.csv.gz",
         level="category", level_scan=False,
     )
 
@@ -129,7 +130,7 @@ def test_missing_id_column_message(cfg, tmp_path):
 def test_idpos_loads_all_levels(mcfg):
     counts = {}
     for lv in ("line", "category", "subcategory"):
-        d = load_idpos(S / "idpos_sample.csv.gz", S / "ure_zaiko_sample.csv.gz",
+        d = load_idpos(IDPOS, S / "ure_zaiko_sample.csv.gz",
                        mcfg, level=lv)
         counts[lv] = len(d.units)
         assert d.metrics and d.store_ids
@@ -139,7 +140,7 @@ def test_idpos_loads_all_levels(mcfg):
 
 
 def test_idpos_hierarchy_path(mcfg):
-    d = load_idpos(S / "idpos_sample.csv.gz", S / "ure_zaiko_sample.csv.gz",
+    d = load_idpos(IDPOS, S / "ure_zaiko_sample.csv.gz",
                    mcfg, level="subcategory")
     unit = next(u for u in d.units if u.startswith("和日配"))
     assert d.parent_of(unit, "line") == "和日配"
@@ -147,7 +148,7 @@ def test_idpos_hierarchy_path(mcfg):
 
 
 def test_margin_rate_is_fraction(mcfg):
-    d = load_idpos(S / "idpos_sample.csv.gz", S / "ure_zaiko_sample.csv.gz",
+    d = load_idpos(IDPOS, S / "ure_zaiko_sample.csv.gz",
                    mcfg, level="line")
     vals = [s.level for (_, _, m), s in d.stats.items()
             if m == "gross_margin_rate" and s.level is not None]
@@ -155,7 +156,7 @@ def test_margin_rate_is_fraction(mcfg):
 
 
 def test_age_mix_excludes_unknown(mcfg):
-    d = load_idpos(S / "idpos_sample.csv.gz", S / "ure_zaiko_sample.csv.gz",
+    d = load_idpos(IDPOS, S / "ure_zaiko_sample.csv.gz",
                    mcfg, level="line")
     assert "不明" not in d.age_bands
     assert max(d.age_unknown_share.values()) > 0, "非会員の年代不明が計上されていない"
@@ -164,7 +165,7 @@ def test_age_mix_excludes_unknown(mcfg):
 
 
 def test_weekly_cv_is_computed(mcfg):
-    d = load_idpos(S / "idpos_sample.csv.gz", S / "ure_zaiko_sample.csv.gz",
+    d = load_idpos(IDPOS, S / "ure_zaiko_sample.csv.gz",
                    mcfg, level="line")
     cvs = [s.cv for (_, _, m), s in d.stats.items() if m == "pi" and s.cv is not None]
     assert cvs and all(0 < c < 1 for c in cvs)
@@ -213,7 +214,9 @@ def test_range_check_detects_out_of_range(cfg):
 def test_loo_has_one_fold_per_store_unit_metric(analysis):
     a = analysis
     expected = len(a.stores) * len(a.idpos.units) * len(a.idpos.metrics)
-    assert len(a.loo.folds) == expected
+    # 立ち上がり補正の対象外だった組み合わせは実績が無く、フォールドが立たない
+    assert 0 < len(a.loo.folds) <= expected
+    assert len(a.loo.folds) > expected * 0.7
 
 
 def test_loo_never_uses_the_held_out_store(analysis):
@@ -255,7 +258,7 @@ def test_baseline_is_computed_for_comparison(analysis):
 
 def test_weights_change_loo(cfg, mcfg):
     stores = load_store_master(S / "store_master.csv", cfg)
-    d = load_idpos(S / "idpos_sample.csv.gz", S / "ure_zaiko_sample.csv.gz",
+    d = load_idpos(IDPOS, S / "ure_zaiko_sample.csv.gz",
                    mcfg, level="line")
     stores = stores[stores[cfg.id_key].astype(str).isin(d.store_ids)]
     a = run_loo(stores, cfg, d, mcfg)
@@ -318,7 +321,8 @@ def test_verify_round_trip(analysis, mcfg, tmp_path):
     p = save_predictions(analysis.predictions, store_name=analysis.new_name,
                          store_id=analysis.new_id, path=tmp_path / "pred.json",
                          axis_weights=analysis.similarity.weights)
-    actual = load_idpos(S / "idpos_newstore_actual.csv.gz",
+    actual = load_idpos([S / "idpos_qty_newstore_actual.csv.gz",
+                         S / "idpos_age_newstore_actual.csv.gz"],
                         S / "ure_zaiko_newstore_actual.csv.gz", mcfg, level="category")
     v = verify_predictions(p, actual, mcfg, analysis.idpos)
     assert v.rows
@@ -331,7 +335,7 @@ def test_verify_round_trip(analysis, mcfg, tmp_path):
 def test_verify_holds_judgement_when_too_few_weeks(analysis, mcfg, tmp_path):
     import gzip
     import io
-    raw = gzip.decompress((S / "idpos_newstore_actual.csv.gz").read_bytes()).decode("cp932")
+    raw = gzip.decompress((S / "idpos_qty_newstore_actual.csv.gz").read_bytes()).decode("cp932")
     df = pd.read_csv(io.StringIO(raw), dtype=str)
     weeks = sorted(df["年週"].unique())[:3]          # 3週だけ = 除外後1週
     small = tmp_path / "small.csv"
@@ -389,7 +393,7 @@ def test_level_scan_degrades_or_holds(cfg, mcfg):
     a = run_analysis(
         config_path=CFG, metrics_path=MCFG,
         master_path=S / "store_master.csv", new_store_path=S / "new_store.csv",
-        idpos_path=S / "idpos_sample.csv.gz", margin_path=S / "ure_zaiko_sample.csv.gz",
+        idpos_path=IDPOS, margin_path=S / "ure_zaiko_sample.csv.gz",
         level="line", level_scan=True,
     )
     assert not a.level_scan.empty
@@ -404,9 +408,9 @@ OPENS = {"0101": "2025-11-28", "0102": "2026-02-20", "0103": "2026-04-17",
 
 def test_opening_weeks_are_excluded(mcfg):
     """開店直後の需要が水準に混ざらないこと。"""
-    raw = load_idpos(S / "idpos_sample.csv.gz", S / "ure_zaiko_sample.csv.gz",
+    raw = load_idpos(IDPOS, S / "ure_zaiko_sample.csv.gz",
                      mcfg, level="line")
-    trimmed = load_idpos(S / "idpos_sample.csv.gz", S / "ure_zaiko_sample.csv.gz",
+    trimmed = load_idpos(IDPOS, S / "ure_zaiko_sample.csv.gz",
                          mcfg, level="line", opening_dates=OPENS)
     assert not trimmed.maturity.empty
     assert (trimmed.maturity["weeks_excluded"] > 0).any()
@@ -417,7 +421,7 @@ def test_opening_weeks_are_excluded(mcfg):
 
 
 def test_immature_store_is_flagged(mcfg):
-    d = load_idpos(S / "idpos_sample.csv.gz", S / "ure_zaiko_sample.csv.gz",
+    d = load_idpos(IDPOS, S / "ure_zaiko_sample.csv.gz",
                    mcfg, level="line", opening_dates=OPENS)
     m = d.maturity
     newest = m.sort_values("weeks_used").iloc[0]
@@ -426,7 +430,7 @@ def test_immature_store_is_flagged(mcfg):
 
 
 def test_exclude_opening_weeks_override(mcfg):
-    d = load_idpos(S / "idpos_sample.csv.gz", S / "ure_zaiko_sample.csv.gz",
+    d = load_idpos(IDPOS, S / "ure_zaiko_sample.csv.gz",
                    mcfg, level="line", opening_dates=OPENS, exclude_opening_weeks=0)
     assert (d.maturity["weeks_excluded"] == 0).all()
 
@@ -435,7 +439,7 @@ def test_exclude_opening_weeks_override(mcfg):
 
 def test_share_metrics_sum_to_one(mcfg):
     """低温内の構成比なので、店舗ごとに合計1になる。"""
-    d = load_idpos(S / "idpos_sample.csv.gz", S / "ure_zaiko_sample.csv.gz",
+    d = load_idpos(IDPOS, S / "ure_zaiko_sample.csv.gz",
                    mcfg, level="category", opening_dates=OPENS)
     assert "gp_share" in d.metrics and "sales_share" in d.metrics
     for sid in d.store_ids:
@@ -446,27 +450,90 @@ def test_share_metrics_sum_to_one(mcfg):
                 assert abs(sum(vals) - 1.0) < 0.02, (sid, metric, sum(vals))
 
 
-def test_per_customer_metrics_need_customers_file(mcfg):
-    without = load_idpos(S / "idpos_sample.csv.gz", S / "ure_zaiko_sample.csv.gz",
-                         mcfg, level="line", opening_dates=OPENS)
-    assert "gp_pi" not in without.metrics
-    assert any("客数" in w for w in without.warnings)
-    with_c = load_idpos(S / "idpos_sample.csv.gz", S / "ure_zaiko_sample.csv.gz",
-                        mcfg, level="line", opening_dates=OPENS,
-                        customers_path=S / "customers_sample.csv.gz")
-    assert "amount_pi" in with_c.metrics and "gp_pi" in with_c.metrics
+def test_customers_are_derived_from_pi(mcfg):
+    """客数 = 売上数量 ÷ PI値 × 1000 で復元できるので、客数ファイルは要らない。"""
+    d = load_idpos(IDPOS, S / "ure_zaiko_sample.csv.gz", mcfg, level="line",
+                   opening_dates=OPENS)
+    for k in ("buy_rate", "units_per_buyer", "unit_price", "amount_pi", "gp_pi"):
+        assert k in d.metrics, k
+    assert not any("復元した客数" in w for w in d.warnings), \
+        "一貫したダミーのはずなのに客数の復元がばらついている"
 
 
-def test_amount_pi_matches_quantity_pi_times_price(mcfg):
-    """金額PI ≒ 数量PI × 単価 になっていること（単位系の取り違え検出）。"""
-    d = load_idpos(S / "idpos_sample.csv.gz", S / "ure_zaiko_sample.csv.gz",
-                   mcfg, level="category", opening_dates=OPENS,
-                   customers_path=S / "customers_sample.csv.gz")
+def test_pi_decomposition_identity(mcfg):
+    """数量PI = 買上率 × 1人当たり点数 × 1000 が成り立つこと。"""
+    d = load_idpos(IDPOS, S / "ure_zaiko_sample.csv.gz", mcfg, level="category",
+                   opening_dates=OPENS)
+    checked = 0
+    for unit in d.units:
+        pi = d.value("0101", unit, "pi")
+        br = d.value("0101", unit, "buy_rate")
+        up = d.value("0101", unit, "units_per_buyer")
+        if None in (pi, br, up):
+            continue
+        assert br * up * 1000 == pytest.approx(pi, rel=0.05), unit
+        checked += 1
+    assert checked >= 5
+
+
+def test_only_one_file_supplies_totals(mcfg):
+    """2本読んでも売上が二重計上されないこと。"""
+    one = load_idpos([S / "idpos_qty_sample.csv.gz"], S / "ure_zaiko_sample.csv.gz",
+                     mcfg, level="line", opening_dates=OPENS)
+    two = load_idpos(IDPOS, S / "ure_zaiko_sample.csv.gz", mcfg, level="line",
+                     opening_dates=OPENS)
+    for unit in one.units:
+        a_, b_ = one.value("0101", unit, "pi"), two.value("0101", unit, "pi")
+        assert a_ == pytest.approx(b_, rel=1e-6), unit
+    assert two.age_bands and not one.age_bands
+
+
+def test_unit_price_is_plausible(mcfg):
+    """平均単価が常識的な範囲に出ること（単位系の取り違え検出）。"""
+    d = load_idpos(IDPOS, S / "ure_zaiko_sample.csv.gz", mcfg, level="category",
+                   opening_dates=OPENS)
     unit = next(u for u in d.units if u.endswith("納豆"))
-    q = d.value("0101", unit, "pi")
-    a = d.value("0101", unit, "amount_pi")
-    price = a / q                      # 1点あたりの単価に相当するはず
-    assert 30 < price < 2000, f"単価が {price:.0f} 円は不自然（単位系を確認）"
+    price = d.value("0101", unit, "unit_price")
+    assert price is not None and 30 < price < 2000, f"単価 {price} は不自然"
+
+
+# ---------------- 立ち上がりカーブ ----------------
+
+def test_ramp_recovers_opening_boost(mcfg):
+    """ダミーは開店週に+35%、3週で消えるように作ってある。"""
+    from shoken.ramp import estimate_ramp
+    d = load_idpos(IDPOS, S / "ure_zaiko_sample.csv.gz", mcfg, level="line",
+                   opening_dates=OPENS)
+    curves = estimate_ramp(d, OPENS)
+    c = curves["pi"]
+    assert c.usable and c.n_contributors >= 2
+    assert c.factors[0] > 1.1, "開店週が成熟水準より高く出ていない"
+    assert c.factors[max(c.factors)] < c.factors[0], "立ち上がりが収束していない"
+
+
+def test_ramp_rescues_immature_store(analysis):
+    """開店直後の週しか無い店が、切り捨てられずに材料に戻ること。"""
+    r = analysis.ramp
+    assert r is not None and r.adjusted_stores
+    assert "0105" in r.adjusted_stores
+    assert "0105" in analysis.idpos.store_ids
+    assert "0105" in set(analysis.stores[analysis.cfg.id_key].astype(str))
+
+
+def test_ramp_adjustment_divides_by_factor(analysis):
+    for a in analysis.ramp.adjustments:
+        assert a.adjusted == pytest.approx(a.observed / a.factor, rel=1e-9)
+
+
+def test_ramp_marks_adjusted_values_as_unreliable(analysis):
+    for a in analysis.ramp.adjustments:
+        st = analysis.idpos.stats[(a.store_id, a.unit, a.metric)]
+        assert st.reliable is False, "推定値が実測扱いになっている"
+
+
+def test_ramp_section_rendered(analysis):
+    html = render_html(analysis)
+    assert "開店からの立ち上がり" in html
 
 
 # ---------------- 転換前後法 ----------------
@@ -476,15 +543,12 @@ def conversion_analysis():
     return run_analysis(
         config_path=CFG, metrics_path=MCFG,
         master_path=S / "store_master.csv", new_store_path=S / "new_store.csv",
-        idpos_path=S / "idpos_sample.csv.gz",
+        idpos_path=IDPOS,
         margin_path=S / "ure_zaiko_sample.csv.gz",
-        customers_path=S / "customers_sample.csv.gz",
-        prior_idpos_path=S / "idpos_prior_sample.csv.gz",
+        prior_idpos_path=S / "idpos_qty_prior_sample.csv.gz",
         prior_margin_path=S / "ure_zaiko_prior_sample.csv.gz",
-        prior_customers_path=S / "customers_prior_sample.csv.gz",
-        baseline_idpos_path=S / "idpos_newstore_baseline.csv.gz",
+        baseline_idpos_path=S / "idpos_qty_newstore_baseline.csv.gz",
         baseline_margin_path=S / "ure_zaiko_newstore_baseline.csv.gz",
-        baseline_customers_path=S / "customers_newstore.csv.gz",
         level="line", level_scan=False,
     )
 

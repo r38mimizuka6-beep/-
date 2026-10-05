@@ -30,8 +30,9 @@ target_categories:
     aliases: ["パン", "ベーカリー", "日配パン", "パン計", "インストアベーカリー"]
 
 # ---- 予測する指標 ----
-# PI値は数量ベースなので、粗利額を客1人あたりに直すには客数が要る。
-# 客数ファイル（任意）が無い場合は、客数の要らない「低温内の構成比」で粗利を見る。
+# 数量PI = 買上率 × 1人当たり点数 × 1000 に分解できる（恒等式）。
+# 分解して見ると、PIが低い原因が「手に取られていない」のか
+# 「買う人は買うが量が少ない」のかが分かれるので、打ち手が変わる。
 metrics:
   - key: pi
     source: pi
@@ -47,40 +48,50 @@ metrics:
     required: false
     higher_is_better: true
     digits: 3
-  - key: sales_per_week
-    source: sales_amount
-    label: 週平均売上(円)
-    kind: scale
-    required: false
-    higher_is_better: true
-    digits: 0
 
-# 内部で計算する指標。
-#   share 系は客数も店舗規模も効かないので、店舗間の比較と棚割配分にそのまま使える。
-#   pi 系は客数ファイルを渡したときだけ計算される。
 derived_metrics:
+  # --- PIの分解（どちらも客数で割るので店舗規模に依存しない） ---
+  - key: buy_rate
+    label: 買上率
+    kind: ratio
+    digits: 4
+    note: "この単位を買った客数 ÷ 店全体の客数。低い＝そもそも手に取られていない。"
+  - key: units_per_buyer
+    label: 1人当たり点数
+    kind: ratio
+    digits: 3
+    note: "売上数量 ÷ 買った客数。低い＝買う人はいるが量が出ていない。"
+  - key: unit_price
+    label: 平均単価(円)
+    kind: ratio
+    digits: 0
+    note: "売上税抜金額 ÷ 売上数量。"
+
+  # --- 粗利（客数は数量とPI値から逆算できるので、別ファイルは不要） ---
+  - key: amount_pi
+    label: 金額PI値
+    kind: per_customer
+    digits: 1
+    source_numerator: sales_amount
+    note: "売上 ÷ 店全体の客数 × 1000。"
+  - key: gp_pi
+    label: 粗利PI値
+    kind: per_customer
+    digits: 2
+    source_numerator: gross_profit
+    note: "粗利額 ÷ 店全体の客数 × 1000。粗利向上の主指標。"
+
+  # --- 低温内での配分（棚割に直結） ---
   - key: gp_share
     label: 粗利額構成比(低温内)
     kind: share_within_scope
     digits: 4
-    note: "その単位の粗利額 ÷ 低温全体の粗利額。客数が不要で、棚の配分に直結する。"
+    note: "その単位の粗利額 ÷ 低温全体の粗利額。"
   - key: sales_share
     label: 売上構成比(低温内)
     kind: share_within_scope
     digits: 4
     note: "その単位の売上 ÷ 低温全体の売上。"
-  - key: amount_pi
-    label: 金額PI値
-    kind: per_customer
-    digits: 2
-    source_numerator: sales_amount
-    note: "売上 ÷ 客数 × 1000。客数ファイルを渡したときだけ計算される。"
-  - key: gp_pi
-    label: 粗利PI値
-    kind: per_customer
-    digits: 3
-    source_numerator: gross_profit
-    note: "粗利額 ÷ 客数 × 1000。粗利向上の主指標だが、客数ファイルが要る。"
 
 # ---- 週次IDPOSの読み込み（実データ2ファイル構成） ----
 # IDPOS____.csv      : 年代別のPI値・売上（顧客層の実測値がここにある）
@@ -88,21 +99,26 @@ derived_metrics:
 # 2つを 年週 × 店舗CD × ライン で突き合わせる。
 idpos:
   encoding: cp932            # 実データはShift-JIS。utf-8ならここを utf-8-sig に
-  level: line                # 集計粒度。line / department / category から選ぶ
+  # 集計粒度。line / department / category / subcategory / segment から選ぶ
+  # 階層は ディビジョン > ライン > 部門 > カテゴリー > サブカテゴリー > セグメント
+  level: category
   division_filter: ["低温"]  # このディビジョンだけを対象にする
   age_unknown_labels: ["不明", "無し", "未設定", "-", ""]
   customer_type_for_age: "会員"   # 年代構成の算出に使う顧客種類。空にすると全件
 
-  # PI値は数量ベース（客1000人あたりの販売点数）
+  # PI値は数量ベース（客1000人あたりの販売点数）。
+  #   数量PI = 売上数量 ÷ 店全体の客数 × 1000
+  # この式を逆に使って、店全体の客数を 売上数量 ÷ PI値 × 1000 で復元する。
+  # 客数ファイルは不要。復元値が行ごとにばらつく場合は警告を出す。
   pi_kind: quantity
+  derive_customers_from_pi: true
 
   # 開店・改装オープン直後の週は需要が跳ねるので、水準の計算から外す。
   # 商圏マスタの open_date 列（YYYY-MM-DD）を見て店舗ごとに判定する。
   # open_date が空の店舗は除外しない。
   exclude_opening_weeks: 8
 
-  # 任意: 店舗×年週のレジ通過客数。渡すと金額PI・粗利PIが計算できる。
-  #   列: store_code, year_week, customers
+  # 任意: 客数を別ファイルで持っている場合。通常は derive_customers_from_pi で足りる。
   customers_file:
     columns:
       store_code: "店舗CD"
@@ -119,9 +135,13 @@ idpos:
       department:    "部門"
       category:      "カテゴリー"
       subcategory:   "サブカテゴリー"
+      segment:       "セグメント"
       customer_type: "顧客種類"
-      age_band:      "年代"
+      age_band:      "年代"          # 年代別エクスポートにのみ存在
+      quantity:      "売上数量"       # 数量・客数つきエクスポートにのみ存在
       sales_amount:  "売上税抜金額(円)"
+      pos_customers: "POS客数"
+      id_customers:  "ID客数"
       pi:            "PI値"
 
   margin_file:
@@ -134,6 +154,7 @@ idpos:
       department:        "部門名"
       category:          "カテゴリー名"
       subcategory:       "サブカテゴリー名"
+      segment:           "セグメント名"
       gross_profit:      "販売荒利高(千円)"
       gross_margin_rate: "販売荒利率"
     gross_profit_scale: 1000     # 千円 -> 円

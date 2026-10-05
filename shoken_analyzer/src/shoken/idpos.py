@@ -28,10 +28,10 @@ import pandas as pd
 from .io_loader import InputError
 from .metrics_config import MetricsConfig
 
-LEVELS = ["division", "line", "department", "category", "subcategory"]
+LEVELS = ["division", "line", "department", "category", "subcategory", "segment"]
 LEVEL_LABEL = {
     "division": "ディビジョン", "line": "ライン", "department": "部門",
-    "category": "カテゴリー", "subcategory": "サブカテゴリー",
+    "category": "カテゴリー", "subcategory": "サブカテゴリー", "segment": "セグメント",
 }
 SEP = " > "
 
@@ -131,7 +131,8 @@ class CellStat:
 
 @dataclass
 class IdposData:
-    panel: pd.DataFrame                   # store × unit × week の週次パネル
+    panel: pd.DataFrame                   # store × unit × week（開店直後を除外済み）
+    panel_all: pd.DataFrame               # 同上。除外前（立ち上がりカーブの推定に使う）
     age: pd.DataFrame                     # store × unit × age_band の構成比
     stats: dict[tuple[str, str, str], CellStat]
     seasonality: pd.DataFrame
@@ -144,6 +145,7 @@ class IdposData:
     age_bands: list[str]
     age_unknown_share: dict[str, float]   # store -> 年代不明の売上シェア
     maturity: pd.DataFrame = field(default_factory=pd.DataFrame)  # 店舗ごとの週数と経過
+    ramp_adjusted: list[str] = field(default_factory=list)  # 立ち上がり補正を当てた店
     warnings: list[str] = field(default_factory=list)
 
     def level_label(self) -> str:
@@ -182,7 +184,7 @@ class IdposData:
 # ---------------------------------------------------------------- 本体
 
 def load_idpos(
-    pi_path: str | Path,
+    pi_path: str | Path | list,
     margin_path: str | Path | None,
     mcfg: MetricsConfig,
     *,
@@ -191,8 +193,15 @@ def load_idpos(
     customers_path: str | Path | None = None,
     exclude_opening_weeks: int | None = None,
 ) -> IdposData:
-    """opening_dates を渡すと、各店の開店直後の週を水準の計算から外す。
+    """IDPOSを読み込み、店舗×分析単位×指標に集計する。
 
+    pi_path には複数ファイルを渡せる。実データのエクスポートは種類が複数あり、
+      ・年代の内訳つき（数量・客数なし）
+      ・数量・客数つき（年代なし）
+    のように列が違う。同じ売上を二重に数えないよう、合計は「数量つき」の
+    ファイル1本から取り、年代構成は年代つきのファイルから取る。
+
+    opening_dates を渡すと、各店の開店直後の週を水準の計算から外す。
     転換時期が店ごとに違うと、開店効果が残っている店の水準が高く出て、
     店舗間の比較が歪む。ここで揃えておかないと類似店法そのものが狂う。
     """
@@ -203,50 +212,70 @@ def load_idpos(
         raise InputError(f"level は {LEVELS} のいずれかにしてください（指定: {level}）")
     warnings: list[str] = []
 
-    # ---- PIファイル ----
+    # ---- PIファイル（複数可） ----
     pcols = spec["pi_file"]["columns"]
-    pdf = _read_csv(pi_path, enc)
-    pdf, miss = _rename(pdf, pcols, pi_path, "IDPOSファイル")
-    if miss:
-        warnings.append(f"IDPOSファイルに無い列（無視します）: {'、'.join(miss)}")
-    for need in ("store_code", "year_week", "line"):
-        if need not in pdf.columns:
-            raise InputError(f"IDPOSファイルに必須の列 '{pcols.get(need)}' がありません。")
+    paths = [pi_path] if isinstance(pi_path, (str, Path)) else list(pi_path)
+    views: list[tuple[Path, pd.DataFrame]] = []
+    for path in paths:
+        df = _read_csv(path, enc)
+        df, miss = _rename(df, pcols, path, "IDPOSファイル")
+        for need in ("store_code", "year_week", "line"):
+            if need not in df.columns:
+                raise InputError(
+                    f"IDPOSファイルに必須の列 '{pcols.get(need)}' がありません: {path}")
+        df["_source"] = Path(path).name
+        views.append((Path(path), df))
 
-    pdf["store_id"] = pdf["store_code"].astype(str).str.strip()
-    if "store_name" not in pdf.columns:
-        pdf["store_name"] = pdf["store_id"]
-    pdf["store_name"] = pdf["store_name"].astype(str).str.strip()
-    yw = pdf["year_week"].map(parse_year_week)
-    pdf["year"] = [a for a, _ in yw]
-    pdf["week"] = [b for _, b in yw]
-    pdf["week_date"] = [week_to_date(a, b) for a, b in yw]
+    def _prep(df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        df["store_id"] = df["store_code"].astype(str).str.strip()
+        if "store_name" not in df.columns:
+            df["store_name"] = df["store_id"]
+        df["store_name"] = df["store_name"].astype(str).str.strip()
+        yw = df["year_week"].map(parse_year_week)
+        df["year"] = [a for a, _ in yw]
+        df["week"] = [b for _, b in yw]
+        df["week_date"] = [week_to_date(a, b) for a, b in yw]
+        for col in ("sales_amount", "pi", "quantity", "pos_customers", "id_customers"):
+            df[col] = _num(df[col]) if col in df.columns else np.nan
+        for lv in LEVELS:
+            if lv not in df.columns:
+                df[lv] = ""
+            df[lv] = df[lv].astype(str).str.strip()
+        if div_filter and "division" in df.columns:
+            df = df[df["division"].isin(div_filter)]
+        return df
+
+    div_filter = spec.get("division_filter") or []
+    views = [(path, _prep(df)) for path, df in views]
+    views = [(path, df) for path, df in views if not df.empty]
+    if not views:
+        raise InputError(
+            f"ディビジョン {div_filter} の行がIDPOSにありません。"
+            "config/metrics.yaml の idpos.division_filter を確認してください。"
+        )
+
+    # 合計を取るファイルは1本だけ選ぶ（二重計上を避ける）。数量つきを優先。
+    def _rank(item) -> tuple:
+        _, df = item
+        return (df["quantity"].notna().any(), df["pos_customers"].notna().any(), len(df))
+    totals_path, pdf = max(views, key=_rank)
+    if len(views) > 1:
+        warnings.append(
+            f"IDPOSを{len(views)}本読み込みました。合計は {totals_path.name} から取り、"
+            "他のファイルは内訳（年代など）の算出にだけ使います（二重計上を避けるため）。"
+        )
     bad = int(pdf["week_date"].isna().sum())
     if bad:
         warnings.append(f"年週を解釈できない行が{bad}件あり、季節性の計算から外しました。")
-    pdf["sales_amount"] = _num(pdf["sales_amount"]) if "sales_amount" in pdf else np.nan
-    pdf["pi"] = _num(pdf["pi"]) if "pi" in pdf else np.nan
-
-    for lv in LEVELS:
-        if lv not in pdf.columns:
-            pdf[lv] = ""
-        pdf[lv] = pdf[lv].astype(str).str.strip()
-
-    div_filter = spec.get("division_filter") or []
-    if div_filter and "division" in pdf.columns:
-        before = len(pdf)
-        pdf = pdf[pdf["division"].isin(div_filter)]
-        if pdf.empty:
-            raise InputError(
-                f"ディビジョン {div_filter} の行がIDPOSにありません。\n"
-                f"  実データのディビジョン: "
-                f"{sorted(set(_read_csv(pi_path, enc).get(pcols['division'], pd.Series(dtype=str)).dropna()))[:10]}"
-            )
-        warnings.append(f"ディビジョン {div_filter} に絞り込み: {before}行 → {len(pdf)}行")
+    if div_filter:
+        warnings.append(f"ディビジョン {div_filter} に絞り込みました。")
 
     # ---- 分析単位 ----
     path_levels = LEVELS[1:LEVELS.index(level) + 1]   # line から level まで
-    pdf["unit"] = pdf[path_levels].agg(SEP.join, axis=1).str.strip(SEP)
+    for _, df in views:
+        df["unit"] = df[path_levels].agg(SEP.join, axis=1).str.strip(SEP)
+    pdf = pdf.copy()
     unit_parents = {
         u: dict(zip(path_levels, u.split(SEP)))
         for u in sorted(set(pdf["unit"])) if u
@@ -256,17 +285,26 @@ def load_idpos(
     unknown = set(spec.get("age_unknown_labels", []))
     ct = spec.get("customer_type_for_age")
 
+    age_views = [df for _, df in views
+                 if "age_band" in df.columns and df["age_band"].notna().any()
+                 and df["age_band"].astype(str).str.strip().ne("").any()]
+    age_src = (age_views[0].copy() if age_views else pdf.iloc[0:0].copy())
+    if not age_views:
+        warnings.append(
+            "年代の内訳を持つIDPOSが渡されていないため、顧客層（年代別）は出せません。"
+            "年代つきのエクスポートも --idpos に並べて渡してください。"
+        )
+
     # 年代が取れない売上の割合は、顧客種類で絞る前に見る（非会員はたいてい年代不明）
     unknown_share: dict[str, float] = {}
-    if "age_band" in pdf.columns:
-        tmp = pdf.copy()
+    if "age_band" in age_src.columns and not age_src.empty:
+        tmp = age_src.copy()
         tmp["age_band"] = tmp["age_band"].astype(str).str.strip()
         for sid, g in tmp.groupby("store_id"):
             tot = g["sales_amount"].sum()
             unk = g.loc[g["age_band"].isin(unknown), "sales_amount"].sum()
             unknown_share[str(sid)] = float(unk / tot) if tot else 0.0
 
-    age_src = pdf.copy()
     if ct and "customer_type" in age_src.columns:
         hit = age_src["customer_type"].astype(str).str.strip() == str(ct)
         if hit.any():
@@ -289,10 +327,29 @@ def load_idpos(
     # ---- 週次パネル（年代・顧客種類を畳む） ----
     keys = ["store_id", "store_name", "unit", "year", "week", "week_date"]
     agg = pdf.groupby(keys, as_index=False, dropna=False).agg(
-        pi=("pi", "sum"), sales_amount=("sales_amount", "sum")
+        pi=("pi", "sum"), sales_amount=("sales_amount", "sum"),
+        quantity=("quantity", "sum"), pos_customers=("pos_customers", "sum"),
     )
 
+    # ---- 店全体の客数を復元 ----
+    # 数量PI = 売上数量 ÷ 店全体の客数 × 1000 なので、客数 = 数量 ÷ PI × 1000。
+    # 行ごとに同じ値になるはずなので、ばらつきはデータの異常を示す。
+    store_customers = pd.DataFrame()
+    if spec.get("derive_customers_from_pi", True) and pdf["quantity"].notna().any():
+        src = pdf[(pdf["pi"] > 0) & pdf["quantity"].notna()].copy()
+        src["_cust"] = src["quantity"] / src["pi"] * 1000
+        g = src.groupby(["store_id", "year", "week"])["_cust"]
+        store_customers = g.median().reset_index().rename(columns={"_cust": "customers"})
+        rel = (g.std() / g.median()).dropna()
+        if len(rel) and float(rel.median()) > 0.02:
+            warnings.append(
+                f"売上数量÷PI値から復元した客数が、同じ週の中で中央{float(rel.median()):.1%}"
+                "ばらついています。PI値の分母が明細ごとに違う可能性があります。"
+                "金額PI・粗利PIの解釈に注意してください。"
+            )
+
     # ---- 開店・改装直後の週を落とす ----
+    panel_all = agg.copy()
     skip_w = int(spec.get("exclude_opening_weeks", 0)
                  if exclude_opening_weeks is None else exclude_opening_weeks)
     maturity_rows = []
@@ -382,15 +439,43 @@ def load_idpos(
     metric_keys = ["pi"]
     if agg["gross_margin_rate"].notna().any():
         metric_keys.append("gross_margin_rate")
-    agg["sales_per_week"] = agg["sales_amount"]
-    if agg["sales_per_week"].notna().any():
-        metric_keys.append("sales_per_week")
+
+    # 客数（店全体）をパネルに付ける。別ファイルが渡されていればそちらを優先。
+    if customers_path:
+        cust = _load_customers(customers_path, spec, enc)
+        agg = agg.merge(cust, on=["store_id", "year", "week"], how="left")
+    elif not store_customers.empty:
+        agg = agg.merge(store_customers, on=["store_id", "year", "week"], how="left")
+    else:
+        agg["customers"] = np.nan
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        # 数量PI = 買上率 × 1人当たり点数 × 1000（恒等式）
+        agg["buy_rate"] = np.where(agg["customers"] > 0,
+                                   agg["pos_customers"] / agg["customers"], np.nan)
+        agg["units_per_buyer"] = np.where(agg["pos_customers"] > 0,
+                                          agg["quantity"] / agg["pos_customers"], np.nan)
+        agg["unit_price"] = np.where(agg["quantity"] > 0,
+                                     agg["sales_amount"] / agg["quantity"], np.nan)
+        agg["amount_pi"] = np.where(agg["customers"] > 0,
+                                    agg["sales_amount"] / agg["customers"] * 1000, np.nan)
+        agg["gp_pi"] = np.where(agg["customers"] > 0,
+                                agg["gross_profit"] / agg["customers"] * 1000, np.nan)
+    for k in ("buy_rate", "units_per_buyer", "unit_price", "amount_pi", "gp_pi"):
+        if agg[k].notna().any():
+            metric_keys.append(k)
+
+    if "buy_rate" not in metric_keys:
+        warnings.append(
+            "売上数量・POS客数が無いため、PIの分解（買上率 × 1人当たり点数）と"
+            "粗利PIは出せません。数量・客数つきのエクスポートを --idpos に渡してください。"
+        )
 
     # 低温全体に占める構成比。客数も店舗規模も効かないので店舗間でそのまま比べられる。
-    totals = agg.groupby(["store_id", "year", "week"], as_index=False).agg(
+    totals_df = agg.groupby(["store_id", "year", "week"], as_index=False).agg(
         _tot_sales=("sales_amount", "sum"), _tot_gp=("gross_profit", "sum")
     )
-    agg = agg.merge(totals, on=["store_id", "year", "week"], how="left")
+    agg = agg.merge(totals_df, on=["store_id", "year", "week"], how="left")
     for key, num, den in (("sales_share", "sales_amount", "_tot_sales"),
                           ("gp_share", "gross_profit", "_tot_gp")):
         if num in agg.columns and agg[num].notna().any():
@@ -398,30 +483,6 @@ def load_idpos(
             if agg[key].notna().any():
                 metric_keys.append(key)
     agg = agg.drop(columns=[c for c in ("_tot_sales", "_tot_gp") if c in agg.columns])
-
-    # 客数が分かる場合だけ、金額PI・粗利PIを出す
-    if customers_path:
-        cust = _load_customers(customers_path, spec, enc)
-        before = len(agg)
-        agg = agg.merge(cust, on=["store_id", "year", "week"], how="left")
-        hit = agg["customers"].notna().mean() if before else 0.0
-        if hit < 0.5:
-            warnings.append(
-                f"客数ファイルと突き合わせられた週が{hit:.0%}しかありません。"
-                "年週の表記か店舗CDを確認してください。"
-            )
-        with np.errstate(divide="ignore", invalid="ignore"):
-            agg["amount_pi"] = agg["sales_amount"] / agg["customers"] * 1000
-            agg["gp_pi"] = agg["gross_profit"] / agg["customers"] * 1000
-        for k in ("amount_pi", "gp_pi"):
-            if agg[k].notna().any():
-                metric_keys.append(k)
-    else:
-        warnings.append(
-            "PI値は数量ベースのため、粗利額を客1人あたりに直すには客数が要ります。"
-            "客数ファイル（店舗CD × 年週 × レジ通過客数）を渡すと金額PI・粗利PIも出せます。"
-            "今は客数の要らない「低温内の粗利額構成比」で粗利を見ています。"
-        )
 
     # ---- 店舗 × 単位 × 指標 の集計 ----
     min_weeks = int(spec.get("min_weeks", 8))
@@ -455,7 +516,7 @@ def load_idpos(
                    .set_index("store_id")["store_name"].to_dict())
 
     return IdposData(
-        panel=agg, age=age, stats=stats,
+        panel=agg, panel_all=panel_all, age=age, stats=stats,
         seasonality=_seasonality(agg, metric_keys),
         units=units, unit_parents=unit_parents, metrics=metric_keys,
         store_ids=sorted(set(agg["store_id"])), store_names=store_names,

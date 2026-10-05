@@ -226,7 +226,8 @@ def _pred_cell(p, mcfg) -> str:
 def _sec_predictions(a) -> str:
     mcfg, idpos = a.mcfg, a.idpos
     by_unit = a.predictions_by_unit()
-    mets = [m for m in ("pi", "gross_margin_rate", "gp_pi", "sales_per_week")
+    mets = [m for m in ("pi", "buy_rate", "units_per_buyer",
+                        "gross_margin_rate", "gp_pi", "gp_share")
             if m in idpos.metrics]
     risk_by_unit = {r.unit: r for r in a.risks}
 
@@ -561,6 +562,46 @@ LOO誤差が週次変動に近い粒度までは使えますが、大きく上�
     ccls = {"高": "note", "中〜高": "note", "中": "note warn", "低": "note bad"}.get(
         c["level"], "note warn")
 
+    # 立ち上がりカーブ
+    ramp_tbl = ""
+    r = getattr(a, "ramp", None)
+    if r is not None and r.curves:
+        rc = r.curves.get("pi")
+        if rc is not None and rc.usable:
+            frows = "".join(
+                f'<tr><td>{w}週目</td><td>{rc.factors[w]:.2f}</td>'
+                f'<td>{"—" if rc.spread.get(w) is None or pd.isna(rc.spread.get(w)) else f"±{rc.spread[w]:.0%}"}</td></tr>'
+                for w in sorted(rc.factors)
+            )
+            arows = "".join(
+                f'<tr><td class="l">{esc(x.store_name)}</td>'
+                f'<td class="l">{esc(a.idpos.leaf(x.unit))}</td>'
+                f'<td>{x.observed:,.2f}</td><td>{x.factor:.3f}</td>'
+                f'<td><strong>{x.adjusted:,.2f}</strong></td>'
+                f'<td>{x.lift_pct:+.1f}%</td></tr>'
+                for x in r.adjustments if x.metric == "pi"
+            )
+            ramp_tbl = f"""
+<h3>開店からの立ち上がりと、未成熟店の補正</h3>
+<p class="sub">成熟期（{rc.mature_from}〜{rc.mature_to}週）に届いた{rc.n_contributors}店
+（{esc("・".join(rc.contributors))}）から、開店何週目に成熟水準の何倍かを測りました。
+開店から日が浅い店は、これで割り戻して成熟水準を推定し、予測の材料に戻しています。</p>
+<div class="cards"><div class="card" style="flex:0 0 280px">
+<table><thead><tr><th>開店からの週</th><th>成熟水準比</th><th>店舗間のばらつき</th></tr></thead>
+<tbody>{frows}</tbody></table></div>
+<div class="card" style="flex:1 1 420px">
+<table><thead><tr><th class="l">店舗</th><th class="l">単位</th><th>観測</th>
+<th>係数</th><th>補正後</th><th>差</th></tr></thead><tbody>{arows}</tbody></table>
+</div></div>
+<div class="note warn">補正後の値は<strong>実測ではなく推定</strong>です。
+カーブを測れた店が{rc.n_contributors}店しかないうちは、形がその店の個性に引きずられます。
+補正を当てた店が類似店に選ばれた場合、予測はその分だけ不確かになります。</div>
+"""
+    if not ramp_tbl:
+        ramp_tbl = ('<div class="note warn">立ち上がりカーブを推定できませんでした'
+                    '（成熟期まで到達した店が無い、または open_date が未入力）。'
+                    '開店から日の浅い店は水準が測れず、予測の材料から外れます。</div>')
+
     mt = a.idpos.maturity
     if mt is None or mt.empty:
         maturity_tbl = ('<div class="note warn">商圏マスタに open_date が無いため、'
@@ -593,6 +634,8 @@ LOO誤差が週次変動に近い粒度までは使えますが、大きく上�
 各店のオープンから一定週を水準の計算から外しています。
 残った週が少ない店は、水準そのものが不安定です。</p>
 {maturity_tbl}
+
+{ramp_tbl}
 
 <h3>LOO検証（1店抜きの実測誤差）</h3>
 <p class="sub">既存{len(a.stores)}店を1店ずつ「新店だと思って」残りから予測し、実績と比べました。
