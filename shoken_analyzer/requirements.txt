@@ -2,3 +2,10 @@ pandas>=2.0
 numpy>=1.24
 openpyxl>=3.1
 PyYAML>=6.0
+
+# ダッシュボード（streamlit run app/dashboard.py）
+streamlit>=1.30
+altair>=5.0
+
+# 所見の文章化（任意。APIキーが無ければ使われない）
+# anthropic>=1.0

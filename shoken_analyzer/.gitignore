@@ -4,3 +4,5 @@ __pycache__/
 output/*.html
 output/*.xlsx
 output/*.json
+warehouse/
+output/_*

@@ -52,7 +52,7 @@ def _axis_bar(z: float | None) -> str:
 
 CSS = """
 :root{--fg:#1b1f23;--muted:#6b7280;--line:#e3e6ea;--bg:#fff;--soft:#f6f8fa;
---ok:#15803d;--warn:#b45309;--bad:#b91c1c;--accent:#1d4ed8;}
+--ok:#15803d;--warn:#ca8a04;--bad:#b91c1c;--accent:#1d4ed8;}
 *{box-sizing:border-box}
 body{font-family:"Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,system-ui,sans-serif;
 color:var(--fg);background:var(--bg);margin:0;padding:0 24px 80px;line-height:1.7;
