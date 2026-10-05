@@ -169,9 +169,25 @@ class IdposData:
         return pd.DataFrame(rows).T.reindex(columns=self.units)
 
     def store_age_mix(self, store: str, unit: str | None = None) -> dict[str, float] | None:
+        """年代構成。年代つきエクスポートが浅い階層までしか無い場合は親に遡る。
+
+        実データは、年代つきのエクスポートが サブカテゴリーまで、
+        数量つきのエクスポートが セグメントまで、のように深さが違うことがある。
+        その場合、深い単位の年代構成は一番近い親のもので代用する。
+        """
         a = self.age[self.age["store_id"] == store]
+        if a.empty:
+            return None
         if unit is not None:
-            a = a[a["unit"] == unit]
+            parts = unit.split(SEP)
+            for depth in range(len(parts), 0, -1):
+                prefix = SEP.join(parts[:depth])
+                hit = a[a["unit"] == prefix]
+                if not hit.empty:
+                    a = hit
+                    break
+            else:
+                return None
         if a.empty:
             return None
         by = a.groupby("age_band")["sales_amount"].sum()

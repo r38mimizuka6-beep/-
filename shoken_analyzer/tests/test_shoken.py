@@ -620,3 +620,28 @@ def test_conversion_unavailable_message_offers_archiving(analysis):
     assert "転換前のIDPOSが残っておらず" in html
     assert "今週から毎週そのまま保存" in html
     assert any("今週から毎週保存" in c["item"] for c in analysis.checklist)
+
+
+def test_age_mix_falls_back_to_parent_when_age_export_is_shallower(mcfg, tmp_path):
+    """年代つきエクスポートがサブカテゴリーまでしか無くても、セグメント粒度で動くこと。"""
+    import gzip
+    import io
+    raw = gzip.decompress((S / "idpos_age_sample.csv.gz").read_bytes()).decode("cp932")
+    df = pd.read_csv(io.StringIO(raw), dtype=str)
+    # セグメント列を落として「浅いエクスポート」を作る
+    shallow = df.drop(columns=["セグメントCD", "セグメント"])
+    shallow = (shallow.assign(_amt=pd.to_numeric(shallow["売上税抜金額(円)"]),
+                              _pi=pd.to_numeric(shallow["PI値"]))
+               .groupby([c for c in shallow.columns
+                         if c not in ("売上税抜金額(円)", "PI値")], as_index=False)
+               .agg(**{"売上税抜金額(円)": ("_amt", "sum"), "PI値": ("_pi", "sum")}))
+    path = tmp_path / "age_shallow.csv"
+    shallow.to_csv(path, index=False, encoding="cp932")
+
+    d = load_idpos([S / "idpos_qty_sample.csv.gz", path],
+                   S / "ure_zaiko_sample.csv.gz", mcfg, level="segment",
+                   opening_dates=OPENS)
+    assert d.age_bands
+    seg = next(u for u in d.units if u.count(" > ") == 4)
+    mix = d.store_age_mix("0101", seg)
+    assert mix and abs(sum(mix.values()) - 1.0) < 1e-6, "親に遡れていない"
