@@ -105,6 +105,17 @@ def build_parser() -> argparse.ArgumentParser:
     w.add_argument("--margin")
     w.add_argument("--level", choices=LEVEL_CHOICES)
 
+    d2 = sub.add_parser("dashboard", help="自己完結のHTMLダッシュボードを書き出す")
+    common(d2)
+    d2.add_argument("--master", required=True)
+    d2.add_argument("--new", required=True)
+    d2.add_argument("--idpos", required=True, nargs="+")
+    d2.add_argument("--margin")
+    d2.add_argument("--search")
+    d2.add_argument("--level", choices=LEVEL_CHOICES)
+    d2.add_argument("--warehouse", help="蓄積状況タブに出す warehouse ディレクトリ")
+    d2.add_argument("--out", default="output/dashboard.html")
+
     t = sub.add_parser("template", help="入力CSVテンプレートを書き出す")
     t.add_argument("--out", default="data/templates")
     t.add_argument("--config", default=str(CFG))
@@ -241,6 +252,23 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"[注意] {w}")
             return 0
 
+        if args.cmd == "dashboard":
+            from .dashboard_html import write_dashboard
+            a = run_analysis(
+                config_path=args.config, metrics_path=args.metrics,
+                master_path=args.master, new_store_path=args.new,
+                idpos_path=args.idpos, margin_path=args.margin,
+                search_path=args.search, level=args.level, level_scan=False,
+            )
+            cov = None
+            if args.warehouse:
+                from .warehouse import Warehouse
+                cov = Warehouse(args.warehouse).coverage()
+            path = write_dashboard(a, args.out, coverage=cov)
+            print(f"HTMLダッシュボード: {path}")
+            _print_summary(a)
+            return 0
+
         if args.cmd == "demo":
             a = run_analysis(
                 config_path=CFG, metrics_path=MCFG,
@@ -273,6 +301,13 @@ def main(argv: list[str] | None = None) -> int:
 
     from .verify import save_predictions
     print(f"HTMLレポート: {write_html(a, args.out)}")
+    if args.cmd == "demo":
+        from .dashboard_html import write_dashboard
+        from .warehouse import Warehouse
+        whdir = ROOT / "warehouse"
+        cov = Warehouse(whdir).coverage() if whdir.exists() else None
+        print("HTMLダッシュボード: "
+              f"{write_dashboard(a, 'output/demo_dashboard.html', coverage=cov)}")
     if getattr(args, "excel", None):
         print(f"Excelレポート: {write_excel(a, args.excel)}")
     pred_path = (getattr(args, "prediction_out", None)

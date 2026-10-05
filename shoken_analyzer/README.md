@@ -68,6 +68,28 @@ streamlit run app/dashboard.py
 **蓄積データと判定対象は分けています。** 蓄積は `warehouse/` に残り続け、
 新店のファイルは判定のたびにアップロードします。
 
+### 配布用のHTML書き出し
+
+Streamlitを起動できない人に渡すために、**1枚で完結するHTMLダッシュボード**を出せます。
+
+```bash
+python run_report.py dashboard --master m.csv --new n.csv \
+    --idpos IDPOS.csv --margin URE_ZAIKO.csv \
+    --warehouse warehouse --out output/dashboard.html
+```
+
+ダッシュボードの②タブからもボタン1つで落とせます。
+
+| できること | できないこと |
+|---|---|
+| Python不要・ダブルクリックで開く | **アップロードして再計算** |
+| オフラインで動く（外部CDNを読まない） | 新しいデータの取り込み |
+| タブ切替・表の並べ替え・グラフのツールチップ | |
+| 印刷するとタブが全部展開される | |
+
+再計算が要る操作はStreamlit版で行ってください。
+**書き出したHTMLには実績由来の数値が埋め込まれます。社外に出さないでください。**
+
 ### 外部ネットワークを使う機能（どちらも任意）
 
 | 機能 | 使うもの | 無い場合 |

@@ -135,21 +135,31 @@ class Warehouse:
         cols = {c.strip(): c for c in df.columns}
         sc = cols.get("店舗CD") or cols.get("店舗コード")
         wc = cols.get("年週")
-        weeks: list[str] = []
+        # 年週の表記はファイルによって違う（202640 / 2026年40週）。
+        # 揃えてからでないと、同じ週を別物として数えてしまう。
+        from .idpos import parse_year_week
+
+        norm: dict[str, str] = {}
         if wc:
-            # 年週の表記はファイルによって違う（202640 / 2026年40週）。
-            # 揃えてからでないと、同じ週を別物として数えてしまう。
-            from .idpos import parse_year_week
-            seen = set()
             for raw in df[wc].astype(str).str.strip().unique():
                 y, w = parse_year_week(raw)
                 if y and w:
-                    seen.add(f"{y}{w:02d}")
-            weeks = sorted(seen)
+                    norm[raw] = f"{y}{w:02d}"
+
+        pairs: list[tuple[str, str]] = []
+        if sc and wc:
+            # 店舗と週の直積ではなく、実際に存在する組み合わせだけを拾う。
+            # 直積にすると「どの店も全週ある」ことになり、抜けを検出できない。
+            d = pd.DataFrame({
+                "s": df[sc].astype(str).str.strip(),
+                "w": df[wc].astype(str).str.strip().map(norm),
+            }).dropna().drop_duplicates()
+            pairs = [(a, b) for a, b in d.itertuples(index=False)]
         return {
             "rows": len(df),
             "stores": sorted(df[sc].astype(str).str.strip().unique()) if sc else [],
-            "weeks": weeks,
+            "weeks": sorted(set(norm.values())),
+            "pairs": pairs,
         }
 
     # ---------------- 状況 ----------------
@@ -162,9 +172,8 @@ class Warehouse:
                     info = self._peek(f)
                 except Exception:                            # noqa: BLE001
                     continue
-                for s in info["stores"]:
-                    for w in info["weeks"]:
-                        rows.append({"kind": kind, "store_id": s, "year_week": w})
+                for s, w in info.get("pairs", []):
+                    rows.append({"kind": kind, "store_id": s, "year_week": w})
         if not rows:
             return Coverage(pd.DataFrame(), [], [], ["まだ何も入っていません。"])
         df = pd.DataFrame(rows).drop_duplicates()

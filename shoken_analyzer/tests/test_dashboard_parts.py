@@ -185,3 +185,28 @@ def test_accuracy_trend_from_history(wh):
     assert len(t) == 1
     assert t.iloc[0]["平均絶対誤差%"] == pytest.approx(10.0)
     assert t.iloc[0]["下振れ"] == 2
+
+
+def test_coverage_uses_real_pairs_not_cross_product(wh):
+    """店舗と週の直積にすると、どの店も全週ありになり抜けを検出できない。"""
+    wh.ingest("idpos", "i.csv.gz", (S / "idpos_sample.csv.gz").read_bytes())
+    cov = wh.coverage()
+    per_store = cov.frame.sum(axis=1).to_dict()
+    assert len(set(per_store.values())) > 1, "全店が同じ週数＝直積になっている"
+    # 転換が新しい店ほど週が少ない
+    assert per_store["0101"] > per_store["0105"]
+
+
+def test_coverage_detects_a_hole(wh, tmp_path):
+    """途中の週を抜いたら、抜けとして報告されること。"""
+    import gzip
+    import io
+    raw = gzip.decompress((S / "idpos_sample.csv.gz").read_bytes()).decode("cp932")
+    df = pd.read_csv(io.StringIO(raw), dtype=str)
+    weeks = sorted(df["年週"].unique())
+    hole = weeks[len(weeks) // 2]
+    holed = tmp_path / "holed.csv"
+    df[df["年週"] != hole].to_csv(holed, index=False, encoding="cp932")
+    wh.ingest("idpos", "holed.csv", holed.read_bytes())
+    cov = wh.coverage()
+    assert any("週の抜け" in g for g in cov.gaps), f"{hole} の抜けが報告されていない"

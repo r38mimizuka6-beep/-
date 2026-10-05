@@ -23,6 +23,7 @@ from theme import ACCENT, BAD, GOOD, GRID, INK, MUTED, accuracy_band, verdict_co
 
 from shoken import agentloop, llm, weather  # noqa: E402
 from shoken.config import Config  # noqa: E402
+from shoken.dashboard_html import render_dashboard  # noqa: E402
 from shoken.idpos import load_idpos  # noqa: E402
 from shoken.io_loader import InputError  # noqa: E402
 from shoken.metrics_config import MetricsConfig  # noqa: E402
@@ -276,6 +277,14 @@ def _render_result(wh: Warehouse, a, use_weather: bool) -> None:
                        file_name=xlsx.name, use_container_width=True,
                        mime="application/vnd.openxmlformats-officedocument."
                             "spreadsheetml.sheet")
+    dash = render_dashboard(a, coverage=wh.coverage(),
+                            verify=st.session_state.get("verify"))
+    st.download_button("このダッシュボードをHTMLで書き出す（配布用・1枚完結）",
+                       dash, file_name=f"dashboard_{a.new_id}.html",
+                       mime="text/html", use_container_width=True)
+    st.caption("Python不要・オフラインで開けます。タブ・並べ替え・ツールチップは"
+               "そのまま使えますが、アップロードして再計算することはできません。"
+               "実績由来の数値が入るので社外に出さないでください。")
     with st.expander("レポートをこの画面で見る"):
         st.components.v1.html(html, height=800, scrolling=True)
 
