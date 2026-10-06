@@ -700,3 +700,24 @@ def test_customers_robust_to_pi_rounding(mcfg):
     # 店舗×週で1つの値に揃っていること
     spread = cust.groupby(["store_id", "year", "week"])["customers"].nunique()
     assert (spread == 1).all()
+
+
+def test_warns_when_an_axis_is_entirely_missing(cfg, tmp_path):
+    """軸が丸ごと空のまま黙って進まないこと。"""
+    new = pd.read_csv(S / "new_store.csv", dtype={"store_id": str})
+    for key in ("share_walk", "share_bike", "share_car", "share_train",
+                "parking_spaces", "nearest_station_m", "sales_floor_sqm"):
+        if key in new.columns:
+            new[key] = ""
+    p = tmp_path / "new_thin.csv"
+    new.to_csv(p, index=False, encoding="utf-8-sig")
+    a = run_analysis(config_path=CFG, metrics_path=MCFG,
+                     master_path=S / "store_master.csv", new_store_path=p,
+                     idpos_path=IDPOS, margin_path=S / "ure_zaiko_sample.csv.gz",
+                     level="line", level_scan=False)
+    assert any("まるごと使えなかった軸" in w for w in a.warnings)
+    assert any("移動手段" in w for w in a.warnings)
+
+
+def test_no_axis_warning_when_inputs_are_complete(analysis):
+    assert not any("まるごと使えなかった軸" in w for w in analysis.warnings)

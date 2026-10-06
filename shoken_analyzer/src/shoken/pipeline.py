@@ -174,6 +174,28 @@ def run_analysis(
             + "、".join(cfg.label(k) for k in sim.skipped)
         )
 
+    # 軸が丸ごと使えないと、類似店は残りの軸だけで選ばれる。黙って進めない。
+    empty_axes, thin_axes = [], []
+    for axis, spec in cfg.axes.items():
+        keys = spec.get("variables", [])
+        used = [k for k in keys if sim.z_new.get(k) is not None]
+        label = spec["label"].split("（")[0]
+        if not used:
+            empty_axes.append(label)
+        elif len(used) < len(keys) / 2:
+            thin_axes.append(f"{label}（{len(used)}/{len(keys)}）")
+    if empty_axes:
+        warnings.append(
+            f"新店の入力が無く、まるごと使えなかった軸があります: {'、'.join(empty_axes)}。"
+            "類似店は残りの軸だけで選ばれています。"
+            "⑤検索データ（来店手段・駐車場・最寄駅・競合）を埋めると選定が変わる可能性があります。"
+        )
+    if thin_axes:
+        warnings.append(
+            f"入力が半分未満しか埋まっていない軸: {'、'.join(thin_axes)}。"
+            "その軸の距離は不安定です。"
+        )
+
     urban_new = axes_mod.judge_urban_rural(new_store, cfg)
     urban_stores = {
         str(r[cfg.id_key]): axes_mod.judge_urban_rural(r, cfg) for _, r in stores.iterrows()

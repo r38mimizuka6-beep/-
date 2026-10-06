@@ -24,6 +24,7 @@ from theme import ACCENT, BAD, GOOD, GRID, INK, MUTED, accuracy_band, verdict_co
 from shoken import agentloop, llm, weather  # noqa: E402
 from shoken.config import Config  # noqa: E402
 from shoken.dashboard_html import render_dashboard  # noqa: E402
+from shoken.extract_xlsx import extract_store  # noqa: E402
 from shoken.idpos import load_idpos  # noqa: E402
 from shoken.io_loader import InputError  # noqa: E402
 from shoken.metrics_config import MetricsConfig  # noqa: E402
@@ -34,6 +35,7 @@ from shoken.verify import save_predictions, verify_predictions  # noqa: E402
 from shoken.warehouse import Warehouse  # noqa: E402
 
 CFG = ROOT / "config" / "columns.yaml"
+EXTRACT_MAP = ROOT / "config" / "extract_shoken_report.yaml"
 MCFG = ROOT / "config" / "metrics.yaml"
 WAREHOUSE = ROOT / "warehouse"
 OUTPUT = ROOT / "output"
@@ -113,6 +115,49 @@ def tab_warehouse(wh: Warehouse) -> None:
             note("検索データを更新しました。", "ok")
 
     st.divider()
+    st.markdown("### 商圏レポートExcelから商圏マスタを作る")
+    st.caption("調査会社の商圏レポート（1店舗=1ブック、ファイル名が店舗名）を入れると、"
+               "商圏の人に関する項目を自動で取り出します。"
+               "競合・周辺施設・来店手段は入らないので、あとで⑤タブか手入力で足してください。")
+    books = st.file_uploader("商圏レポート（複数可）", type=["xlsx", "xlsm"],
+                             accept_multiple_files=True, key="u_books",
+                             label_visibility="collapsed")
+    if books and st.button("Excelから項目を取り出す"):
+        tmpdir = OUTPUT / "_books"
+        tmpdir.mkdir(parents=True, exist_ok=True)
+        rows, errs = [], []
+        for f in books:
+            dest = tmpdir / f.name
+            dest.write_bytes(f.getvalue())
+            try:
+                rows.append(extract_store(dest, EXTRACT_MAP))
+            except Exception as e:                            # noqa: BLE001
+                errs.append(f"{f.name}: {e}")
+        for e in errs:
+            note(e, "err")
+        if rows:
+            df = pd.DataFrame(rows)
+            st.session_state["extracted_master"] = df
+            filled = [c for c in df.columns if df[c].notna().any()]
+            note(f"{len(df)}店舗を読み取りました（値が入った列 {len(filled)} / "
+                 f"{len(df.columns)}）。store_id は店舗CDに書き換えてください。", "ok")
+
+    ex = st.session_state.get("extracted_master")
+    if ex is not None:
+        st.caption("**store_id を IDPOS の店舗CD と一致させてから**登録してください"
+                   "（先頭ゼロも含めて）。open_date も忘れずに。")
+        edited = st.data_editor(ex.astype(str), use_container_width=True,
+                                num_rows="dynamic", key="edit_master")
+        c5, c6 = st.columns(2)
+        c5.download_button("CSVとしてダウンロード",
+                           edited.to_csv(index=False).encode("utf-8-sig"),
+                           file_name="store_master.csv", use_container_width=True)
+        if c6.button("既存店の商圏マスタとして登録する", use_container_width=True):
+            wh.put_text("master", "store_master.csv",
+                        edited.to_csv(index=False).encode("utf-8-sig"))
+            note("商圏マスタを登録しました。", "ok")
+
+    st.divider()
     st.markdown("### 入っているもの")
     cov = wh.coverage()
     if cov.frame.empty:
@@ -152,7 +197,10 @@ def tab_predict(wh: Warehouse) -> None:
         note("先に「蓄積データ」タブで週次IDPOSを取り込んでください。", "warn")
         return
 
-    up = st.file_uploader("新店の商圏情報（1行）", type=["csv", "xlsx"], key="u_new")
+    kind = st.radio("新店の商圏情報の入れ方", ["商圏レポートExcel（調査会社のブック）",
+                                          "記入済みのCSV / Excel（1行）"],
+                    horizontal=True, key="new_kind")
+    up = st.file_uploader("新店の商圏情報", type=["csv", "xlsx", "xlsm"], key="u_new")
     c1, c2, c3 = st.columns(3)
     level_label = c1.selectbox("分析粒度", list(LEVELS), index=2)
     top_n = c2.number_input("類似店の数", 1, 4, 2)
@@ -170,6 +218,21 @@ def tab_predict(wh: Warehouse) -> None:
     tmp = OUTPUT / f"_new_{up.name}"
     tmp.parent.mkdir(parents=True, exist_ok=True)
     tmp.write_bytes(up.getvalue())
+
+    if kind.startswith("商圏レポート"):
+        try:
+            row = extract_store(tmp, EXTRACT_MAP)
+        except Exception as e:                                # noqa: BLE001
+            note(f"商圏レポートとして読めませんでした: {e}\n"
+                 "記入済みのCSVなら、上の選択を切り替えてください。", "err")
+            return
+        st.caption("Excelから取り出した内容です。**store_id を店舗CDに、"
+                   "open_date をオープン予定日に**直してから出力してください。")
+        row.setdefault("store_id", "NEW01")
+        edited = st.data_editor(pd.DataFrame([row]).astype(str),
+                                use_container_width=True, key="edit_new")
+        tmp = OUTPUT / "_new_from_book.csv"
+        tmp.write_bytes(edited.to_csv(index=False).encode("utf-8-sig"))
 
     if not st.button("レポートを出力", type="primary", use_container_width=True):
         return
