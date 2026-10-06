@@ -382,10 +382,20 @@ def load_idpos(
     # ---- 粗利ファイル ----
     if margin_path:
         mspec = spec["margin_file"]
-        mdf = _read_csv(margin_path, enc)
-        mdf, mmiss = _rename(mdf, mspec["columns"], margin_path, "粗利ファイル")
-        if mmiss:
-            warnings.append(f"粗利ファイルに無い列（無視します）: {'、'.join(mmiss)}")
+        # 週次で溜めるので複数ファイルを受ける。年週×店舗×階層が重なる行は
+        # 後から入れたファイルを採用する（再エクスポートでの差し替えを想定）。
+        mpaths = ([margin_path] if isinstance(margin_path, (str, Path))
+                  else list(margin_path))
+        mparts: list[pd.DataFrame] = []
+        for mp in mpaths:
+            part = _read_csv(mp, enc)
+            part, mmiss = _rename(part, mspec["columns"], mp, "粗利ファイル")
+            if mmiss:
+                warnings.append(
+                    f"粗利ファイル {Path(mp).name} に無い列（無視します）: {'、'.join(mmiss)}")
+            part["_source"] = Path(mp).name
+            mparts.append(part)
+        mdf = pd.concat(mparts, ignore_index=True)
         mdf["store_id"] = mdf["store_code"].astype(str).str.strip()
         myw = mdf["year_week"].map(parse_year_week)
         mdf["year"] = [a for a, _ in myw]
@@ -397,12 +407,65 @@ def load_idpos(
         if div_filter:
             mdf = mdf[mdf["division"].isin(div_filter)]
         mdf["unit"] = mdf[path_levels].agg(SEP.join, axis=1).str.strip(SEP)
+
+        if "gross_profit" not in mdf.columns:
+            raise InputError(
+                f"粗利ファイルに '{mspec['columns']['gross_profit']}' がありません。"
+                "エクスポートの抽出項目に荒利高を含めてください。"
+            )
         scale = float(mspec.get("gross_profit_scale", 1))
         mdf["gross_profit"] = _num(mdf["gross_profit"]) * scale
-        mdf["gross_margin_rate"] = _num(mdf["gross_margin_rate"])
-        # 率から売上を逆算して、上位階層の率を加重平均で正しく出す
-        with np.errstate(divide="ignore", invalid="ignore"):
-            mdf["sales_est"] = mdf["gross_profit"] / mdf["gross_margin_rate"].replace(0, np.nan)
+
+        # 上位階層の粗利率は単純平均ではなく売上で加重しないと正しくない。
+        # そのための売上は、売上金額の列があればそれを使い、無ければ
+        # 荒利高 ÷ 荒利率 で逆算する。率は丸めて出力されることが多いので、
+        # 売上金額が取れるならそちらの方が誤差が小さい。
+        has_rate = "gross_margin_rate" in mdf.columns
+        has_amount = "sales_amount" in mdf.columns
+        if not has_rate and not has_amount:
+            raise InputError(
+                "粗利ファイルに "
+                f"'{mspec['columns'].get('gross_margin_rate')}' と "
+                f"'{mspec['columns'].get('sales_amount')}' のどちらもありません。"
+                "エクスポートの抽出項目に、荒利率か売上金額のどちらかを含めてください。"
+            )
+        if has_amount:
+            amt_scale = float(mspec.get("sales_amount_scale", 1))
+            mdf["sales_est"] = _num(mdf["sales_amount"]) * amt_scale
+            if has_rate:
+                # 単位取り違え（千円と円）を取り違えたまま進めないよう突き合わせる。
+                chk = _num(mdf["gross_margin_rate"])
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    implied = mdf["gross_profit"] / mdf["sales_est"].replace(0, np.nan)
+                both = chk.notna() & implied.notna() & (chk != 0)
+                if both.any():
+                    ratio = float((implied[both] / chk[both]).median())
+                    if not (0.5 < ratio < 2.0):
+                        warnings.append(
+                            f"荒利高と売上金額から計算した粗利率が、ファイルの荒利率の"
+                            f"{ratio:.3g}倍になっています。単位（円／千円）の設定"
+                            " idpos.margin_file.gross_profit_scale / sales_amount_scale"
+                            " を確認してください。"
+                        )
+        else:
+            mdf["gross_margin_rate"] = _num(mdf["gross_margin_rate"])
+            with np.errstate(divide="ignore", invalid="ignore"):
+                mdf["sales_est"] = (mdf["gross_profit"]
+                                    / mdf["gross_margin_rate"].replace(0, np.nan))
+
+        # 同じ行が複数ファイルに入っていたら、最後のものを残す。
+        # キーはファイルの明細粒度（全階層）であって集計単位 unit ではない。
+        # unit で重複排除すると、同じカテゴリーに属する別セグメントの行まで
+        # 捨ててしまい、粗利高が過少になる。
+        if len(mpaths) > 1:
+            before = len(mdf)
+            mdf = mdf.drop_duplicates(
+                subset=["store_id", "year", "week"] + list(LEVELS), keep="last")
+            if before != len(mdf):
+                warnings.append(
+                    f"粗利ファイルで重複していた{before - len(mdf):,}行を、"
+                    "後から取り込んだファイルの値で上書きしました。"
+                )
         magg = mdf.groupby(["store_id", "unit", "year", "week"], as_index=False).agg(
             gross_profit=("gross_profit", "sum"), sales_est=("sales_est", "sum")
         )

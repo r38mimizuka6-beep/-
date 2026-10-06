@@ -69,7 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--new", required=True, help="新店の商圏情報（1行）")
     r.add_argument("--idpos", required=True, nargs="+",
                    help="既存店の週次IDPOS CSV（種類が複数あるなら並べて渡す）")
-    r.add_argument("--margin", help="既存店の週次 売上在庫（粗利）CSV")
+    r.add_argument("--margin", nargs="+", help="既存店の週次 売上在庫（粗利）CSV（複数可）")
     r.add_argument("--customers", help="店舗CD×年週×レジ通過客数のCSV（任意。渡すと粗利PIが出せる）")
     r.add_argument("--prior-idpos", help="既存店の【業態転換前】の週次IDPOS")
     r.add_argument("--prior-margin", help="既存店の【業態転換前】の週次 売上在庫")
@@ -90,7 +90,7 @@ def build_parser() -> argparse.ArgumentParser:
     common(v)
     v.add_argument("--prediction", required=True, help="report で保存された予測JSON")
     v.add_argument("--idpos", required=True, nargs="+", help="新店の週次IDPOS")
-    v.add_argument("--margin", help="新店の週次 売上在庫（粗利）")
+    v.add_argument("--margin", nargs="+", help="新店の週次 売上在庫（粗利）（複数可）")
     v.add_argument("--ref-idpos", required=True, nargs="+",
                    help="既存店の週次IDPOS（季節指数を借りる）")
     v.add_argument("--ref-margin", help="既存店の週次 売上在庫")
@@ -102,7 +102,7 @@ def build_parser() -> argparse.ArgumentParser:
     common(w)
     w.add_argument("--master", required=True)
     w.add_argument("--idpos", required=True, nargs="+")
-    w.add_argument("--margin")
+    w.add_argument("--margin", nargs="+")
     w.add_argument("--level", choices=LEVEL_CHOICES)
 
     d2 = sub.add_parser("dashboard", help="自己完結のHTMLダッシュボードを書き出す")
@@ -110,7 +110,7 @@ def build_parser() -> argparse.ArgumentParser:
     d2.add_argument("--master", required=True)
     d2.add_argument("--new", required=True)
     d2.add_argument("--idpos", required=True, nargs="+")
-    d2.add_argument("--margin")
+    d2.add_argument("--margin", nargs="+")
     d2.add_argument("--search")
     d2.add_argument("--level", choices=LEVEL_CHOICES)
     d2.add_argument("--warehouse", help="蓄積状況タブに出す warehouse ディレクトリ")

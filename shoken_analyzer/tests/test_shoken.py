@@ -721,3 +721,78 @@ def test_warns_when_an_axis_is_entirely_missing(cfg, tmp_path):
 
 def test_no_axis_warning_when_inputs_are_complete(analysis):
     assert not any("まるごと使えなかった軸" in w for w in analysis.warnings)
+
+
+# ---------------- 売上在庫（粗利）ファイルの最小構成 ----------------
+
+MARGIN = S / "ure_zaiko_sample.csv.gz"
+
+
+def _margin_frame() -> pd.DataFrame:
+    return pd.read_csv(MARGIN, encoding="cp932", dtype=str)
+
+
+def _write(df: pd.DataFrame, path: Path) -> Path:
+    df.to_csv(path, index=False, encoding="cp932")
+    return path
+
+
+def test_margin_accepts_multiple_files(mcfg, tmp_path):
+    """週次で分割して溜めても、1本にまとめたときと同じ結果になること。"""
+    df = _margin_frame()
+    weeks = sorted(df["年週"].unique())
+    half = len(weeks) // 2
+    a = _write(df[df["年週"].isin(weeks[:half])], tmp_path / "m1.csv")
+    b = _write(df[df["年週"].isin(weeks[half:])], tmp_path / "m2.csv")
+
+    one = load_idpos(IDPOS, MARGIN, mcfg, level="category")
+    two = load_idpos(IDPOS, [a, b], mcfg, level="category")
+
+    key = ["store_id", "unit", "year", "week"]
+    m = (one.panel[key + ["gross_margin_rate"]]
+         .merge(two.panel[key + ["gross_margin_rate"]], on=key, suffixes=("_1", "_2")))
+    assert len(m) > 0
+    both = m["gross_margin_rate_1"].notna() & m["gross_margin_rate_2"].notna()
+    assert both.any(), "分割して読むと粗利率が全て欠損している"
+    diff = (m.loc[both, "gross_margin_rate_1"] - m.loc[both, "gross_margin_rate_2"]).abs()
+    assert diff.max() < 1e-9, "分割して読むと結果が変わる"
+
+
+def test_margin_works_without_rate_when_sales_amount_present(mcfg, tmp_path):
+    """荒利率を外して売上金額だけにしても動き、率がほぼ一致すること。"""
+    df = _margin_frame()
+    rate = df["販売荒利率"].str.rstrip("%").astype(float) / 100
+    gp = df["販売荒利高(千円)"].astype(float) * 1000
+    df["売上金額(税抜)"] = (gp / rate.replace(0, pd.NA)).round(0)
+    only_amount = _write(df.drop(columns=["販売荒利率"]), tmp_path / "amount.csv")
+
+    base = load_idpos(IDPOS, MARGIN, mcfg, level="category")
+    alt = load_idpos(IDPOS, only_amount, mcfg, level="category")
+
+    key = ["store_id", "unit", "year", "week"]
+    m = (base.panel[key + ["gross_margin_rate"]]
+         .merge(alt.panel[key + ["gross_margin_rate"]], on=key, suffixes=("_r", "_a")))
+    both = m["gross_margin_rate_r"].notna() & m["gross_margin_rate_a"].notna()
+    assert both.sum() > 0, "売上金額だけでは粗利率が出ていない"
+    # 売上金額を円単位に丸めた分だけずれる（実データでも同じ桁の誤差）。
+    diff = (m.loc[both, "gross_margin_rate_r"] - m.loc[both, "gross_margin_rate_a"]).abs()
+    assert diff.max() < 1e-4
+
+
+def test_margin_rejects_file_without_rate_and_amount(mcfg, tmp_path):
+    df = _margin_frame().drop(columns=["販売荒利率"])
+    bad = _write(df, tmp_path / "no_rate.csv")
+    with pytest.raises(InputError, match="荒利率か売上金額"):
+        load_idpos(IDPOS, bad, mcfg, level="category")
+
+
+def test_margin_warns_on_unit_mismatch(mcfg, tmp_path):
+    """売上金額を千円のまま入れたら、単位がおかしいと警告すること。"""
+    df = _margin_frame()
+    rate = df["販売荒利率"].str.rstrip("%").astype(float) / 100
+    gp_sen = df["販売荒利高(千円)"].astype(float)
+    df["売上金額(税抜)"] = (gp_sen / rate.replace(0, pd.NA)).round(1)   # 千円のまま
+    path = _write(df, tmp_path / "wrong_unit.csv")
+
+    data = load_idpos(IDPOS, path, mcfg, level="category")
+    assert any("単位" in w for w in data.warnings), data.warnings

@@ -243,7 +243,7 @@ def tab_predict(wh: Warehouse) -> None:
                 config_path=CFG, metrics_path=MCFG,
                 master_path=wh.master_path, new_store_path=tmp,
                 idpos_path=wh.idpos_files(),
-                margin_path=wh.margin_files()[0] if wh.margin_files() else None,
+                margin_path=wh.margin_files() or None,
                 search_path=wh.search_path if wh.search_path.exists() else None,
                 level=LEVELS[level_label], weight_overrides=weights,
                 top_n=int(top_n), level_scan=False,
@@ -434,7 +434,7 @@ def tab_verify(wh: Warehouse) -> None:
     with st.spinner("突き合わせています…"):
         actual = load_idpos(paths, mpath, mcfg, level=level)
         ref = load_idpos(wh.idpos_files(),
-                         wh.margin_files()[0] if wh.margin_files() else None,
+                         wh.margin_files() or None,
                          mcfg, level=level)
         v = verify_predictions(pred_path, actual, mcfg, ref)
 
