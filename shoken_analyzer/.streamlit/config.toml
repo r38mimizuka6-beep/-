@@ -1,0 +1,14 @@
+# 社内運用のため、外部への送信を止める設定。
+[browser]
+# Streamlit の匿名利用統計を送信しない。
+gatherUsageStats = false
+
+[server]
+# ローカルPCの中だけで待ち受ける（同じ社内LANの他端末からも見えない）。
+address = "localhost"
+# アップロードする商圏レポート/IDPOSの上限（MB）。
+maxUploadSize = 400
+
+[theme]
+base = "light"
+primaryColor = "#1d4ed8"

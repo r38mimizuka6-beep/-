@@ -1,0 +1,8 @@
+# Windows のバッチファイルは CRLF のまま配布する。
+# LF で配布すると cmd.exe が行を認識できず起動に失敗する。
+*.bat -text
+*.cmd -text
+
+# macOS / Linux のシェルスクリプトは LF 固定。
+*.command text eol=lf
+*.sh      text eol=lf
