@@ -6,3 +6,6 @@
 # macOS / Linux のシェルスクリプトは LF 固定。
 *.command text eol=lf
 *.sh      text eol=lf
+
+# VBScript は WSH が読めるよう UTF-16LE(BOM)+CRLF のまま配布する。
+*.vbs -text

@@ -6,3 +6,4 @@ output/*.xlsx
 output/*.json
 warehouse/
 output/_*
+logs/

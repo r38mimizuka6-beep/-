@@ -6,6 +6,9 @@ gatherUsageStats = false
 [server]
 # ローカルPCの中だけで待ち受ける（同じ社内LANの他端末からも見えない）。
 address = "localhost"
+# ブックマークできるよう番号を固定する。空いていないと起動に失敗するので、
+# その場合は stop_dashboard.vbs で古いサーバーを止めてから開き直す。
+port = 8501
 # アップロードする商圏レポート/IDPOSの上限（MB）。
 maxUploadSize = 400
 
