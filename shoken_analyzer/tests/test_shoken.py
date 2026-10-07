@@ -782,7 +782,7 @@ def test_margin_works_without_rate_when_sales_amount_present(mcfg, tmp_path):
 def test_margin_rejects_file_without_rate_and_amount(mcfg, tmp_path):
     df = _margin_frame().drop(columns=["販売荒利率"])
     bad = _write(df, tmp_path / "no_rate.csv")
-    with pytest.raises(InputError, match="荒利率か売上金額"):
+    with pytest.raises(InputError, match="荒利率.*も売上金額.*もありません"):
         load_idpos(IDPOS, bad, mcfg, level="category")
 
 
@@ -796,3 +796,73 @@ def test_margin_warns_on_unit_mismatch(mcfg, tmp_path):
 
     data = load_idpos(IDPOS, path, mcfg, level="category")
     assert any("単位" in w for w in data.warnings), data.warnings
+
+
+# ---------------- 列名の揺れ（実データのエクスポート見出し） ----------------
+
+def test_margin_matches_header_without_unit_suffix(mcfg, tmp_path):
+    """見出しが『販売荒利高』（単位の括弧書きなし）でも読めること。
+
+    実機で KeyError: 'gross_profit' になった形。
+    """
+    df = _margin_frame().rename(columns={"販売荒利高(千円)": "販売荒利高"})
+    path = _write(df, tmp_path / "no_unit.csv")
+
+    data = load_idpos(IDPOS, path, mcfg, level="category")
+    assert data.panel["gross_margin_rate"].notna().any()
+    assert any("販売荒利高" in w for w in data.warnings), data.warnings
+
+
+def test_margin_reads_unit_from_header(mcfg, tmp_path):
+    """見出しが『販売荒利高(円)』なら、設定が千円でも円として読むこと。"""
+    df = _margin_frame()
+    df["販売荒利高(円)"] = (df["販売荒利高(千円)"].astype(float) * 1000).round(0)
+    df = df.drop(columns=["販売荒利高(千円)"])
+    path = _write(df, tmp_path / "yen.csv")
+
+    base = load_idpos(IDPOS, MARGIN, mcfg, level="category")
+    yen = load_idpos(IDPOS, path, mcfg, level="category")
+
+    key = ["store_id", "unit", "year", "week"]
+    m = (base.panel[key + ["gross_profit"]]
+         .merge(yen.panel[key + ["gross_profit"]], on=key, suffixes=("_b", "_y")))
+    both = m["gross_profit_b"].notna() & m["gross_profit_y"].notna()
+    assert both.any()
+    assert (m.loc[both, "gross_profit_b"] - m.loc[both, "gross_profit_y"]).abs().max() < 1e-6
+
+
+def test_margin_fixes_thousand_yen_mixup(mcfg, tmp_path):
+    """荒利高が千円・売上金額が円で食い違っていたら、直して読むこと。"""
+    df = _margin_frame()
+    rate = df["販売荒利率"].str.rstrip("%").astype(float) / 100
+    gp_yen = df["販売荒利高(千円)"].astype(float) * 1000
+    df["売上金額"] = (gp_yen / rate.replace(0, pd.NA)).round(0)   # 円
+    df = df.rename(columns={"販売荒利高(千円)": "販売荒利高"})       # 単位表記なし
+    df["販売荒利高"] = df["販売荒利高"].astype(float) * 1000         # 中身は円
+    path = _write(df, tmp_path / "mixed.csv")
+
+    data = load_idpos(IDPOS, path, mcfg, level="category")
+    assert any("単位" in w and "倍" in w for w in data.warnings), data.warnings
+    rates = data.panel["gross_margin_rate"].dropna()
+    assert rates.between(0, 1).all(), "単位を直したのに粗利率が範囲外"
+
+
+def test_missing_gross_profit_names_the_columns(mcfg, tmp_path):
+    """荒利高が無いときは、ファイルに入っていた列を挙げて教えること。"""
+    df = _margin_frame().drop(columns=["販売荒利高(千円)"])
+    path = _write(df, tmp_path / "no_gp.csv")
+    with pytest.raises(InputError) as e:
+        load_idpos(IDPOS, path, mcfg, level="category")
+    msg = str(e.value)
+    assert "読み込めた列" in msg
+    assert "販売荒利率" in msg, msg
+
+
+def test_ambiguous_column_is_not_guessed(mcfg, tmp_path):
+    """正規化すると同じになる列が複数あるときは、当てずっぽうで選ばないこと。"""
+    df = _margin_frame().rename(columns={"販売荒利高(千円)": "販売荒利高(円)"})
+    df["販売荒利高(千円)"] = df["販売荒利高(円)"]
+    path = _write(df, tmp_path / "ambiguous.csv")
+    data = load_idpos(IDPOS, path, mcfg, level="category")
+    # 完全一致する '販売荒利高(千円)' が優先されるので読めてよい
+    assert data.panel["gross_profit"].notna().any()

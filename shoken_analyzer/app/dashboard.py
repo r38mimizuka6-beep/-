@@ -66,6 +66,23 @@ def note(msg: str, kind: str = "info") -> None:
      "ok": st.success}[kind](msg)
 
 
+def crash(what: str, e: Exception) -> None:
+    """想定外の例外を、画面を壊さずに出す。
+
+    InputError は原因が特定できているのでそのまま見せる。それ以外は
+    何をしていて落ちたかを先に書き、技術的な内容は畳んでおく。
+    貼り付けて相談できるよう、全文は残す。
+    """
+    import traceback
+    if isinstance(e, InputError):
+        note(str(e), "err")
+        return
+    note(f"{what}の途中でエラーになりました。入力ファイルの列名や中身が"
+         "想定と違う可能性があります。下の詳細をコピーして共有してください。", "err")
+    with st.expander("詳細（コピーして共有してください）"):
+        st.code("".join(traceback.format_exception(type(e), e, e.__traceback__)))
+
+
 # ---------------------------------------------------------------- 1. 蓄積
 
 def tab_warehouse(wh: Warehouse) -> None:
@@ -248,8 +265,8 @@ def tab_predict(wh: Warehouse) -> None:
                 level=LEVELS[level_label], weight_overrides=weights,
                 top_n=int(top_n), level_scan=False,
             )
-        except InputError as e:
-            note(str(e), "err")
+        except Exception as e:                               # noqa: BLE001
+            crash("レポートの出力", e)
             return
 
     st.session_state["analysis"] = a
@@ -432,11 +449,15 @@ def tab_verify(wh: Warehouse) -> None:
     level = json.loads(pred_path.read_text(encoding="utf-8")).get(
         "extra", {}).get("level", "category")
     with st.spinner("突き合わせています…"):
-        actual = load_idpos(paths, mpath, mcfg, level=level)
-        ref = load_idpos(wh.idpos_files(),
-                         wh.margin_files() or None,
-                         mcfg, level=level)
-        v = verify_predictions(pred_path, actual, mcfg, ref)
+        try:
+            actual = load_idpos(paths, mpath, mcfg, level=level)
+            ref = load_idpos(wh.idpos_files(),
+                             wh.margin_files() or None,
+                             mcfg, level=level)
+            v = verify_predictions(pred_path, actual, mcfg, ref)
+        except Exception as e:                               # noqa: BLE001
+            crash("予実の突き合わせ", e)
+            return
 
     cols = st.columns(len(v.summary) or 1)
     for col, (k, n) in zip(cols, v.summary.items()):

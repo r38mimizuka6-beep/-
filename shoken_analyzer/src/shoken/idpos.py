@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime as dt
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -51,21 +52,80 @@ def _read_csv(path: str | Path, encoding: str) -> pd.DataFrame:
     raise InputError(f"文字コードを判別できませんでした: {path}（{last}）")
 
 
-def _rename(df: pd.DataFrame, mapping: dict[str, str], path, what: str) -> pd.DataFrame:
+def _norm_col(name) -> str:
+    """列名を突き合わせ用に正規化する。
+
+    エクスポートの見出しは、単位の括弧書き（販売荒利高(千円) ⇔ 販売荒利高）や
+    全角半角、空白の有無で揺れる。設定ファイルを毎回書き換えずに済むよう、
+    これらを落とした形で比較する。
+    """
+    s = unicodedata.normalize("NFKC", str(name)).strip()
+    s = re.sub(r"[(][^)]*[)]", "", s)     # NFKC後は括弧も半角になる
+    s = re.sub(r"[\s_・･]", "", s)
+    return s.lower()
+
+
+def _rename(df: pd.DataFrame, mapping: dict[str, str], path, what: str,
+            warnings: list[str] | None = None):
+    """設定の列名を内部名に付け替える。
+
+    戻り値は (付け替え後のDataFrame, 見つからなかったキーの説明, 採用した元の列名)。
+    元の列名を返すのは、単位（千円／円）を見出しから判定するため。
+    """
     df = df.rename(columns={c: str(c).strip() for c in df.columns})
-    rev, missing = {}, []
+    cols = list(df.columns)
+    rev: dict[str, str] = {}
+    chosen: dict[str, str] = {}
+    missing: list[str] = []
+    notes: list[str] = []
+
+    taken: set[str] = set()
+    pending: list[tuple[str, str]] = []
     for key, col in mapping.items():
-        if col in df.columns:
+        if col in cols and col not in taken:
             rev[col] = key
+            chosen[key] = col
+            taken.add(col)
+        else:
+            pending.append((key, col))
+
+    # 完全一致しなかったものだけ、正規化して照合する。
+    norm_index: dict[str, list[str]] = {}
+    for c in cols:
+        norm_index.setdefault(_norm_col(c), []).append(c)
+    for key, col in pending:
+        cands = [c for c in norm_index.get(_norm_col(col), []) if c not in taken]
+        if len(cands) == 1:
+            rev[cands[0]] = key
+            chosen[key] = cands[0]
+            taken.add(cands[0])
+            notes.append(f"'{col}' は '{cands[0]}' として読みました")
+        elif len(cands) > 1:
+            missing.append(f"{key} ← '{col}'")
+            notes.append(f"'{col}' に当たる列が複数あって決められません: {cands}")
         else:
             missing.append(f"{key} ← '{col}'")
+
     if not rev:
         raise InputError(
             f"{what}の列が1つも一致しませんでした: {path}\n"
             f"  読み込めた列: {list(df.columns)}\n"
             f"  config/metrics.yaml の idpos.*_file.columns を実データの列名に合わせてください。"
         )
-    return df.rename(columns=rev), missing
+    if notes and warnings is not None:
+        warnings.append(f"{what}（{Path(path).name}）の列: " + "、".join(notes))
+    return df.rename(columns=rev), missing, chosen
+
+
+def _unit_scale(header: str | None, default: float) -> tuple[float, str | None]:
+    """見出しの単位表記から倍率を決める。判定できなければ既定値を返す。"""
+    if not header:
+        return default, None
+    h = unicodedata.normalize("NFKC", str(header))
+    for token, mul in (("百万円", 1_000_000.0), ("千円", 1000.0), ("円", 1.0)):
+        if token in h:
+            return mul, token
+    return default, None
 
 
 _WEEK_RE = re.compile(r"(\d{4})\D*?(\d{1,2})\D*$")
@@ -234,7 +294,7 @@ def load_idpos(
     views: list[tuple[Path, pd.DataFrame]] = []
     for path in paths:
         df = _read_csv(path, enc)
-        df, miss = _rename(df, pcols, path, "IDPOSファイル")
+        df, miss, _ = _rename(df, pcols, path, "IDPOSファイル", warnings)
         for need in ("store_code", "year_week", "line"):
             if need not in df.columns:
                 raise InputError(
@@ -387,9 +447,17 @@ def load_idpos(
         mpaths = ([margin_path] if isinstance(margin_path, (str, Path))
                   else list(margin_path))
         mparts: list[pd.DataFrame] = []
+        chosen_headers: dict[str, str] = {}
+        src_cols: list[str] = []
         for mp in mpaths:
             part = _read_csv(mp, enc)
-            part, mmiss = _rename(part, mspec["columns"], mp, "粗利ファイル")
+            for c in part.columns:
+                c = str(c).strip()
+                if c not in src_cols:
+                    src_cols.append(c)
+            part, mmiss, mchosen = _rename(part, mspec["columns"], mp,
+                                           "粗利ファイル", warnings)
+            chosen_headers.update(mchosen)
             if mmiss:
                 warnings.append(
                     f"粗利ファイル {Path(mp).name} に無い列（無視します）: {'、'.join(mmiss)}")
@@ -410,11 +478,25 @@ def load_idpos(
 
         if "gross_profit" not in mdf.columns:
             raise InputError(
-                f"粗利ファイルに '{mspec['columns']['gross_profit']}' がありません。"
-                "エクスポートの抽出項目に荒利高を含めてください。"
+                f"粗利ファイルに荒利高の列（設定では "
+                f"'{mspec['columns']['gross_profit']}'）がありません。\n"
+                f"  読み込めた列: {src_cols}\n"
+                "  エクスポートの抽出項目に荒利高を入れるか、"
+                "config/metrics.yaml の idpos.margin_file.columns.gross_profit を"
+                "実際の見出しに合わせてください。"
             )
-        scale = float(mspec.get("gross_profit_scale", 1))
+        # 単位は見出しの表記を優先する。「販売荒利高(千円)」なら千円、
+        # 「販売荒利高(円)」なら円。表記が無ければ設定値を使う。
+        scale, gp_unit = _unit_scale(chosen_headers.get("gross_profit"),
+                                     float(mspec.get("gross_profit_scale", 1)))
         mdf["gross_profit"] = _num(mdf["gross_profit"]) * scale
+        if gp_unit is None and scale != 1:
+            warnings.append(
+                f"荒利高の見出し '{chosen_headers.get('gross_profit')}' に単位の表記が"
+                f"ないため、設定どおり {scale:g} 倍（千円→円）として読みました。"
+                "実データが円単位なら config/metrics.yaml の "
+                "idpos.margin_file.gross_profit_scale を 1 にしてください。"
+            )
 
         # 上位階層の粗利率は単純平均ではなく売上で加重しないと正しくない。
         # そのための売上は、売上金額の列があればそれを使い、無ければ
@@ -424,14 +506,22 @@ def load_idpos(
         has_amount = "sales_amount" in mdf.columns
         if not has_rate and not has_amount:
             raise InputError(
-                "粗利ファイルに "
-                f"'{mspec['columns'].get('gross_margin_rate')}' と "
-                f"'{mspec['columns'].get('sales_amount')}' のどちらもありません。"
-                "エクスポートの抽出項目に、荒利率か売上金額のどちらかを含めてください。"
+                "粗利ファイルに荒利率（設定では "
+                f"'{mspec['columns'].get('gross_margin_rate')}'）も売上金額（設定では "
+                f"'{mspec['columns'].get('sales_amount')}'）もありません。\n"
+                f"  読み込めた列: {src_cols}\n"
+                "  上位階層の粗利率を売上で加重平均するために、"
+                "どちらか一方が必要です。エクスポートの抽出項目に加えてください。"
             )
         if has_amount:
-            amt_scale = float(mspec.get("sales_amount_scale", 1))
+            amt_scale, amt_unit = _unit_scale(chosen_headers.get("sales_amount"),
+                                              float(mspec.get("sales_amount_scale", 1)))
             mdf["sales_est"] = _num(mdf["sales_amount"]) * amt_scale
+            if amt_unit is None and amt_scale != 1:
+                warnings.append(
+                    f"売上金額の見出し '{chosen_headers.get('sales_amount')}' に単位の"
+                    f"表記がないため、設定どおり {amt_scale:g} 倍として読みました。"
+                )
             if has_rate:
                 # 単位取り違え（千円と円）を取り違えたまま進めないよう突き合わせる。
                 chk = _num(mdf["gross_margin_rate"])
@@ -441,12 +531,28 @@ def load_idpos(
                 if both.any():
                     ratio = float((implied[both] / chk[both]).median())
                     if not (0.5 < ratio < 2.0):
-                        warnings.append(
-                            f"荒利高と売上金額から計算した粗利率が、ファイルの荒利率の"
-                            f"{ratio:.3g}倍になっています。単位（円／千円）の設定"
-                            " idpos.margin_file.gross_profit_scale / sales_amount_scale"
-                            " を確認してください。"
-                        )
+                        # ちょうど1000倍／1000分の1なら単位の取り違えが確実なので、
+                        # 荒利高の倍率を直してそのまま進める。半端な比率のときは
+                        # 原因が別にあるので直さず、警告だけ出す。
+                        fix = next((f for f in (1000.0, 0.001)
+                                    if abs(ratio / f - 1) < 0.05), None)
+                        if fix is not None:
+                            mdf["gross_profit"] = mdf["gross_profit"] / fix
+                            warnings.append(
+                                f"荒利高の単位が売上金額と {fix:g} 倍ずれていたため、"
+                                f"荒利高を 1/{fix:g} にして読みました"
+                                f"（見出し: '{chosen_headers.get('gross_profit')}' / "
+                                f"'{chosen_headers.get('sales_amount')}'）。"
+                                "意図と違う場合は config/metrics.yaml の "
+                                "idpos.margin_file.gross_profit_scale を指定してください。"
+                            )
+                        else:
+                            warnings.append(
+                                f"荒利高と売上金額から計算した粗利率が、ファイルの荒利率の"
+                                f"{ratio:.3g}倍になっています。単位（円／千円）の設定"
+                                " idpos.margin_file.gross_profit_scale /"
+                                " sales_amount_scale を確認してください。"
+                            )
         else:
             mdf["gross_margin_rate"] = _num(mdf["gross_margin_rate"])
             with np.errstate(divide="ignore", invalid="ignore"):
@@ -681,7 +787,7 @@ def parse_open_date(value) -> tuple[pd.Timestamp, bool]:
 def _load_customers(path: str | Path, spec: dict, enc: str) -> pd.DataFrame:
     cols = spec.get("customers_file", {}).get("columns", {})
     df = _read_csv(path, enc)
-    df, _ = _rename(df, cols, path, "客数ファイル")
+    df, _, _ = _rename(df, cols, path, "客数ファイル")
     df["store_id"] = df["store_code"].astype(str).str.strip()
     yw = df["year_week"].map(parse_year_week)
     df["year"] = [a for a, _ in yw]
