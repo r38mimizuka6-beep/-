@@ -866,3 +866,100 @@ def test_ambiguous_column_is_not_guessed(mcfg, tmp_path):
     data = load_idpos(IDPOS, path, mcfg, level="category")
     # 完全一致する '販売荒利高(千円)' が優先されるので読めてよい
     assert data.panel["gross_profit"].notna().any()
+
+
+# ---------------- 検索データExcel ----------------
+
+from shoken.search_book import extract_search_row  # noqa: E402
+
+SEARCH_MAP = ROOT / "config" / "extract_search_book.yaml"
+SEARCH_BOOK = S / "都心A店_検索データ.xlsx"
+
+
+def test_search_book_extracts_numbers_and_counts():
+    got = extract_search_row(SEARCH_BOOK, SEARCH_MAP)
+    r = got.row
+    assert r["store_name"] == "都心A店"
+    assert r["station_daily_users"] == "41200"       # 「約41,200人 / 日」
+    assert r["parking_spaces"] == "28"               # 「28台」
+    assert r["comp_sm_1km"] == "2"
+    assert r["comp_drug_1km"] == "3"
+    assert r["comp_discount_1km"] == "1"
+    assert r["fac_school"] == "2"                    # 小学校 + 中学校
+    assert r["fac_nursery"] == "1"
+
+
+def test_search_book_estimates_station_distance():
+    """徒歩3〜4分 → 中央値3.5分 × 80m = 280m。目安だと明示すること。"""
+    got = extract_search_row(SEARCH_BOOK, SEARCH_MAP)
+    assert got.row["nearest_station_m"] == "280"
+    assert any("目安" in n for n in got.notes), got.notes
+
+
+def test_search_book_reports_uncounted_categories():
+    """数えられなかった区分は黙って捨てず、名前を挙げること。"""
+    got = extract_search_row(SEARCH_BOOK, SEARCH_MAP)
+    assert any("大型公園" in n for n in got.notes), got.notes
+
+
+def test_search_book_surfaces_the_radius():
+    """件数の集計範囲は、店舗間で揃っているか人が確かめられるよう出すこと。"""
+    got = extract_search_row(SEARCH_BOOK, SEARCH_MAP)
+    assert any("1km" in r for r in got.radius_notes), got.radius_notes
+    assert all("nan" not in r.lower() for r in got.radius_notes), got.radius_notes
+
+
+def test_search_book_does_not_invent_missing_fields():
+    """読み取れない項目は空のまま。推測で埋めないこと。"""
+    got = extract_search_row(SEARCH_BOOK, SEARCH_MAP)
+    # どれもサンプルのブックには書かれていない項目
+    for key in ("comp_cvs_1km", "fac_university", "fac_factory",
+                "own_store_overlap", "pop_density", "store_format"):
+        assert key not in got.row, f"{key} を勝手に埋めている"
+
+
+def test_search_book_rejects_wrong_shape(tmp_path):
+    import openpyxl
+    wb = openpyxl.Workbook()
+    wb.active.title = "別のなにか"
+    wb.active.append(["a", "b"])
+    p = tmp_path / "wrong.xlsx"
+    wb.save(p)
+    with pytest.raises(InputError, match="サマリーのシート"):
+        extract_search_row(p, SEARCH_MAP)
+
+
+def test_search_book_reads_mobility_axis_fields():
+    """軸3（移動手段）の5項目が、ブックから全て埋まること。
+
+    この5つが欠けると軸3が丸ごと空になり、類似店の選定が変わる。
+    """
+    got = extract_search_row(SEARCH_BOOK, SEARCH_MAP)
+    r = got.row
+    assert r["share_walk"] == "0.42"      # 「42%」
+    assert r["share_bike"] == "0.38"
+    assert r["share_car"] == "0.08"
+    assert r["share_train"] == "0.12"
+    assert r["sales_floor_sqm"] == "1480"  # 「1,480 m2」
+    assert r["parking_spaces"] == "28"
+    assert r["nearest_station_m"] == "280"
+    assert abs(sum(float(r[k]) for k in
+                   ("share_walk", "share_bike", "share_car", "share_train")) - 1) < 0.01
+
+
+def test_search_book_reads_share_written_as_fraction(tmp_path):
+    """構成比が「0.42」と書かれていても百分率と誤読しないこと。"""
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "商圏サマリー"
+    for r in [("項目", "詳細情報"), ("店舗名", "X店"), ("来店手段 徒歩", "0.42")]:
+        ws.append(r)
+    p = tmp_path / "frac.xlsx"
+    wb.save(p)
+    assert extract_search_row(p, SEARCH_MAP).row["share_walk"] == "0.42"
+
+
+def test_search_book_reads_open_date():
+    """開店日は開店直後の週を除外するのに必須。和暦混じりでない限り拾うこと。"""
+    assert extract_search_row(SEARCH_BOOK, SEARCH_MAP).row["open_date"] == "2024-03-15"

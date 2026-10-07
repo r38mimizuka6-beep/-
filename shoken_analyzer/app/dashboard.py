@@ -32,11 +32,13 @@ from shoken.pipeline import run_analysis  # noqa: E402
 from shoken.report import render_html, write_excel  # noqa: E402
 from shoken.search_profile import SEARCH_COLUMNS, store_name_from_filename  # noqa: E402
 from shoken.verify import save_predictions, verify_predictions  # noqa: E402
+from shoken.search_book import extract_search_row  # noqa: E402
 from shoken.warehouse import Warehouse  # noqa: E402
 
 CFG = ROOT / "config" / "columns.yaml"
 EXTRACT_MAP = ROOT / "config" / "extract_shoken_report.yaml"
 MCFG = ROOT / "config" / "metrics.yaml"
+SEARCH_MAP = ROOT / "config" / "extract_search_book.yaml"
 WAREHOUSE = ROOT / "warehouse"
 OUTPUT = ROOT / "output"
 LEVELS = {"ライン": "line", "部門": "department", "カテゴリー": "category",
@@ -64,6 +66,26 @@ def axis_cfg(chart: alt.Chart) -> alt.Chart:
 def note(msg: str, kind: str = "info") -> None:
     {"info": st.info, "warn": st.warning, "err": st.error,
      "ok": st.success}[kind](msg)
+
+
+def merge_search_rows(wh: Warehouse, rows: pd.DataFrame) -> int:
+    """検索データに行を足す。同じ店舗の行があれば新しい方で置き換える。"""
+    cols = ["store_id", "store_name"] + [k for k, _, _ in SEARCH_COLUMNS]
+    rows = rows.reindex(columns=cols).fillna("").astype(str)
+    if wh.search_path.exists():
+        existing = pd.read_csv(wh.search_path, dtype=str).fillna("")
+        existing = existing.reindex(columns=cols).fillna("").astype(str)
+    else:
+        existing = pd.DataFrame(columns=cols)
+    out = pd.concat([existing, rows], ignore_index=True)
+    # 後から入れた行を残す。store_id が空なら店舗名で突き合わせる。
+    out["_key"] = out.apply(
+        lambda r: r["store_id"].strip() or r["store_name"].strip(), axis=1)
+    out = out[out["_key"] != ""].drop_duplicates(subset="_key", keep="last")
+    out = out.drop(columns="_key")
+    wh.put_text("search", "search_profile.csv",
+                out.to_csv(index=False).encode("utf-8-sig"))
+    return len(out)
 
 
 def crash(what: str, e: Exception) -> None:
@@ -124,12 +146,19 @@ def tab_warehouse(wh: Warehouse) -> None:
             wh.put_text("master", m.name, m.getvalue())
             note("商圏マスタを更新しました（以前の版は .bak で残しています）。", "ok")
     with c4:
-        st.markdown("**検索データ**（competitorや周辺施設。任意）")
-        s = st.file_uploader("検索データ", type=["csv"], key="u_search",
-                             label_visibility="collapsed")
-        if s and st.button("検索データを置き換える"):
-            wh.put_text("search", s.name, s.getvalue())
-            note("検索データを更新しました。", "ok")
+        st.markdown("**検索データ**（競合・周辺施設・アクセス。任意）")
+        st.caption("1店舗=1ブックのExcel（複数可）か、全店まとめた記入済みCSV。")
+        sfiles = st.file_uploader("検索データ", type=["csv", "xlsx", "xlsm"],
+                                  accept_multiple_files=True, key="u_search",
+                                  label_visibility="collapsed")
+        if sfiles:
+            books = [f for f in sfiles if f.name.lower().endswith((".xlsx", ".xlsm"))]
+            csvs = [f for f in sfiles if f.name.lower().endswith(".csv")]
+            if csvs and st.button("記入済みCSVで置き換える"):
+                wh.put_text("search", "search_profile.csv", csvs[0].getvalue())
+                note("検索データを置き換えました（以前の版は .bak で残しています）。", "ok")
+            if books:
+                _search_books_ui(wh, books)
 
     st.divider()
     st.markdown("### 商圏レポートExcelから商圏マスタを作る")
@@ -201,6 +230,44 @@ def tab_warehouse(wh: Warehouse) -> None:
 
 
 # ---------------------------------------------------------------- 2. 判定
+
+def _search_books_ui(wh: Warehouse, books) -> None:
+    """検索データExcel（1店舗=1ブック）を読み取り、確認してから登録する。"""
+    rows, notes, radius = [], [], []
+    for f in books:
+        tmp = OUTPUT / f"_search_{f.name}"
+        tmp.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_bytes(f.getvalue())
+        try:
+            got = extract_search_row(tmp, SEARCH_MAP)
+        except Exception as e:                               # noqa: BLE001
+            crash(f"{f.name} の読み取り", e)
+            continue
+        row = got.row
+        row.setdefault("store_name", store_name_from_filename(f.name))
+        rows.append(row)
+        notes += [f"{f.name}: {n}" for n in got.notes]
+        radius += [f"{f.name}: {r}" for r in got.radius_notes]
+
+    if not rows:
+        return
+
+    if radius:
+        note("**件数を数えた範囲**（既存店と新店で揃っていないと比較が壊れます）\n\n"
+             + "\n".join(f"- {r}" for r in radius), "warn")
+    for n in notes:
+        st.caption(f"・{n}")
+
+    cols = ["store_id", "store_name"] + [k for k, _, _ in SEARCH_COLUMNS]
+    frame = pd.DataFrame(rows).reindex(columns=cols).fillna("").astype(str)
+    st.caption("**store_id を店舗CDに合わせてから**登録してください。"
+               "空欄は「不明」として扱われ、類似度の計算から外れます。")
+    edited = st.data_editor(frame, use_container_width=True, hide_index=True,
+                            key="edit_search_books")
+    if st.button("検索データとして登録する", type="primary"):
+        n = merge_search_rows(wh, edited)
+        note(f"登録しました。検索データは{n}店舗分になりました。", "ok")
+
 
 def tab_predict(wh: Warehouse) -> None:
     st.subheader("新店を判定する")
@@ -583,6 +650,16 @@ def tab_search(wh: Warehouse) -> None:
     st.subheader("商圏の検索データ")
     st.caption("店舗名で検索して、競合・周辺施設・アクセスを埋めます。"
                "空欄のままでも分析は動きます（その項目が類似度から外れるだけ）。")
+
+    st.markdown("### 検索データExcelを読み込む")
+    st.caption("1店舗=1ブック。商圏サマリー・競合店一覧・周辺施設一覧の3シート構成を想定しています。")
+    books = st.file_uploader("検索データExcel（複数可）", type=["xlsx", "xlsm"],
+                             accept_multiple_files=True, key="u_search_book")
+    if books:
+        _search_books_ui(wh, books)
+
+    st.divider()
+    st.markdown("### 手で調べて1行ずつ入れる")
     name = st.text_input("店舗名（商圏レポートのファイル名でも可）")
     if not name:
         return
@@ -616,12 +693,8 @@ def tab_search(wh: Warehouse) -> None:
     edited = st.data_editor(pd.DataFrame([row]), use_container_width=True,
                             hide_index=True, key="search_editor")
     if st.button("この行を検索データに追記する"):
-        existing = (pd.read_csv(wh.search_path, dtype=str)
-                    if wh.search_path.exists() else pd.DataFrame(columns=cols))
-        out = pd.concat([existing, edited], ignore_index=True)
-        wh.put_text("search", "search_profile.csv",
-                    out.to_csv(index=False).encode("utf-8-sig"))
-        note("追記しました。", "ok")
+        n = merge_search_rows(wh, edited)
+        note(f"追記しました。検索データは{n}店舗分になりました。", "ok")
 
 
 # ---------------------------------------------------------------- main
