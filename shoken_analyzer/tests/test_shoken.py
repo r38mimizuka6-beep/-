@@ -873,6 +873,7 @@ def test_ambiguous_column_is_not_guessed(mcfg, tmp_path):
 from shoken.search_book import extract_search_row  # noqa: E402
 
 SEARCH_MAP = ROOT / "config" / "extract_search_book.yaml"
+EXTRACT_MAP = ROOT / "config" / "extract_shoken_report.yaml"
 SEARCH_BOOK = S / "都心A店_検索データ.xlsx"
 
 
@@ -1036,3 +1037,88 @@ def test_standardizer_treats_float_noise_as_no_variance():
     assert z["flat_noisy"] is None, "丸め誤差から z 値を作っている"
     assert z["flat_exact"] is None
     assert abs(z["real"]) < 10
+
+
+# ---------------- ファイル名からの店舗CD ----------------
+
+from shoken.search_profile import store_id_from_filename  # noqa: E402
+from shoken.extract_xlsx import extract_store  # noqa: E402
+
+
+@pytest.mark.parametrize("name,code", [
+    ("0785_花小金井.xlsx", "0785"),
+    ("0803_武蔵新城エリア.xlsx", "0803"),
+    ("0821_トライアル西友河辺店.xlsx", "0821"),
+    ("0785 花小金井.xlsx", "0785"),
+    ("0785-花小金井.xlsx", "0785"),
+    ("０７８５_花小金井.xlsx", "0785"),        # 全角
+    ("西友　浦安店様.xlsx", None),             # CDなし
+    ("2024_商圏レポート.xlsx", None),          # 西暦は店舗CDにしない
+    ("〇〇店_商圏レポート_20250401.xlsx", None),  # 末尾の日付も拾わない
+])
+def test_store_id_from_filename(name, code):
+    assert store_id_from_filename(name) == code
+
+
+def test_store_name_drops_the_code_prefix():
+    assert store_name_from_filename("0785_トライアル西友花小金井店.xlsx") == "トライアル西友花小金井店"
+    assert store_name_from_filename("0785_花小金井.xlsx") == "花小金井"
+
+
+def test_search_book_takes_store_id_from_filename(tmp_path):
+    """実データはファイル名の頭に店舗CDが付く。それを store_id にすること。"""
+    import shutil
+    p = tmp_path / "0785_花小金井.xlsx"
+    shutil.copy(SEARCH_BOOK, p)
+    got = extract_search_row(p, SEARCH_MAP)
+    assert got.row["store_id"] == "0785"
+    assert any("0785" in n for n in got.notes), got.notes
+
+
+def test_open_date_can_come_from_search_data(tmp_path):
+    """オープン日は商圏マスタではなく検索データ側に入れても効くこと。"""
+    m = pd.read_csv(S / "store_master.csv", dtype=str)
+    opens = dict(zip(m["store_id"], m["open_date"]))
+    no_open = tmp_path / "master.csv"
+    m.drop(columns=["open_date"]).to_csv(no_open, index=False, encoding="utf-8-sig")
+
+    search = tmp_path / "search.csv"
+    pd.DataFrame({"store_id": list(opens), "open_date": list(opens.values())}
+                 ).to_csv(search, index=False, encoding="utf-8-sig")
+
+    a = run_analysis(config_path=CFG, metrics_path=MCFG,
+                     master_path=no_open, new_store_path=S / "new_store.csv",
+                     idpos_path=IDPOS, margin_path=MARGIN, search_path=search,
+                     level="category", level_scan=False)
+    assert not [w for w in a.warnings if "open_date" in w], \
+        "検索データに入れた open_date が使われていない"
+    byu = a.predictions_by_unit()
+    got = sum(1 for mm in byu.values() for p in mm.values()
+              if p is not None and p.point is not None)
+    assert got > 0, "数字が1つも出ていない"
+
+
+def test_extract_store_takes_store_id_from_filename(tmp_path):
+    """商圏レポートExcelでも、ファイル名の店舗CDを store_id にすること。
+
+    以前は店舗名を store_id にしていたため、IDPOSの店舗CDと突き合わず
+    レポートの数字が全て空になっていた。
+    """
+    import openpyxl
+    import yaml as _yaml
+    spec = _yaml.safe_load(EXTRACT_MAP.read_text(encoding="utf-8"))
+    sheets = {s["sheet"] for s in (spec.get("cells") or {}).values()}
+    sheets.add(spec["meta"]["store_name"]["sheet"])
+    wb = openpyxl.Workbook()
+    wb.active.title = sorted(sheets)[0]
+    for name in sheets:
+        if name not in wb.sheetnames:
+            wb.create_sheet(name)
+    p = tmp_path / "0785_トライアル西友花小金井店.xlsx"
+    wb.save(p)
+
+    row = extract_store(p, EXTRACT_MAP)
+    assert row["store_id"] == "0785"
+    assert row["store_name"] == "トライアル西友花小金井店"   # CDは店名に残さない
+    # 明示指定があればそちらが勝つ
+    assert extract_store(p, EXTRACT_MAP, store_id="9999")["store_id"] == "9999"

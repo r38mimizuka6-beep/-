@@ -67,6 +67,8 @@ def _find_by_header(wb, sheet: str, header: str, header_row: int, data_row: int)
     return None
 
 
+from .search_profile import store_id_from_filename, store_name_from_filename
+
 def extract_store(
     xlsx_path: str | Path,
     map_path: str | Path,
@@ -90,8 +92,12 @@ def extract_store(
     raw_name = _cell(wb, name_spec["sheet"], name_spec["cell"]) if name_spec else None
     area_spec = meta.get("area_def")
     raw_area = _cell(wb, area_spec["sheet"], area_spec["cell"]) if area_spec else None
-    out["store_name"] = store_name or (str(raw_name).strip() if raw_name else xlsx_path.stem)
-    out["store_id"] = store_id or out["store_name"]
+    # ブック内に店名が無ければファイル名から作る。先頭の店舗CDは店名に残さない。
+    out["store_name"] = store_name or (str(raw_name).strip() if raw_name
+                                       else store_name_from_filename(xlsx_path))
+    # ファイル名の頭に店舗CDが付いていればそれを使う（0785_〇〇店.xlsx → 0785）。
+    # 店舗名を store_id にすると、IDPOSの店舗CDと突き合わず数字が1つも出なくなる。
+    out["store_id"] = store_id or store_id_from_filename(xlsx_path) or out["store_name"]
     out["trade_area_def"] = str(raw_area).strip() if raw_area else ""
 
     # セル直指定

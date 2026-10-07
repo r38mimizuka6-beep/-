@@ -21,6 +21,7 @@ import pandas as pd
 import yaml
 
 from .io_loader import InputError
+from .search_profile import store_id_from_filename
 
 _NUM = re.compile(r"\d[\d,]*(?:\.\d+)?")
 _METERS = re.compile(r"(\d[\d,]*)\s*(?:m|メートル)\b", re.IGNORECASE)
@@ -108,6 +109,12 @@ def extract_search_row(path: str | Path, config_path: str | Path) -> SearchBook:
     row: dict[str, str] = {}
     notes: list[str] = []
     radius: list[str] = []
+
+    # ファイル名の頭に店舗CDが付いていれば採用する（0785_花小金井.xlsx → 0785）。
+    code = store_id_from_filename(path)
+    if code:
+        row["store_id"] = code
+        notes.append(f"ファイル名から店舗CD {code} を読みました")
 
     scfg = cfg["summary"]
     sheet = _find_sheet(book, scfg["sheet_names"])

@@ -277,9 +277,11 @@ def tab_warehouse(wh: Warehouse) -> None:
 def _search_books_ui(wh: Warehouse, books) -> None:
     """検索データExcel（1店舗=1ブック）を読み取り、確認してから登録する。"""
     rows, notes, radius = [], [], []
+    # ファイル名の先頭にある店舗CDを読むので、名前を変えずに置く。
+    tmpdir = OUTPUT / "_search_books"
+    tmpdir.mkdir(parents=True, exist_ok=True)
     for f in books:
-        tmp = OUTPUT / f"_search_{f.name}"
-        tmp.parent.mkdir(parents=True, exist_ok=True)
+        tmp = tmpdir / Path(f.name).name
         tmp.write_bytes(f.getvalue())
         try:
             got = extract_search_row(tmp, SEARCH_MAP)
@@ -303,10 +305,30 @@ def _search_books_ui(wh: Warehouse, books) -> None:
 
     cols = ["store_id", "store_name"] + [k for k, _, _ in SEARCH_COLUMNS]
     frame = pd.DataFrame(rows).reindex(columns=cols).fillna("").astype(str)
-    st.caption("**store_id を店舗CDに合わせてから**登録してください。"
-               "空欄は「不明」として扱われ、類似度の計算から外れます。")
+
+    known = _idpos_store_codes(wh)
+    if known:
+        st.caption("蓄積ずみIDPOSの店舗CD: " + "  ".join(known))
+    st.caption("**store_id が IDPOS の店舗CD と一致している必要があります。**"
+               "ファイル名の先頭に店舗CDが付いていれば自動で入ります"
+               "（例 `0785_花小金井.xlsx`）。"
+               "**オープン日は open_date 列に `2024-03-15` の形で入れてください。**")
     edited = st.data_editor(frame, use_container_width=True, hide_index=True,
                             key="edit_search_books")
+
+    ids = [str(v).strip() for v in edited.get("store_id", pd.Series(dtype=str))]
+    if known:
+        bad = [i for i in ids if i and i not in known]
+        blank = sum(1 for i in ids if not i)
+        if blank:
+            note(f"{blank}件の store_id が空です。ファイル名の先頭に店舗CDを付けるか、"
+                 "表に直接入力してください。", "warn")
+        if bad:
+            note(f"IDPOSに無い store_id: {bad}。"
+                 "この行は既存店と結びつかず、使われません。", "warn")
+        if ids and not bad and not blank:
+            note(f"{len(ids)}件すべてIDPOSの店舗CDと一致しています。", "ok")
+
     if st.button("検索データとして登録する", type="primary"):
         n = merge_search_rows(wh, edited)
         note(f"登録しました。検索データは{n}店舗分になりました。", "ok")
@@ -342,8 +364,9 @@ def tab_predict(wh: Warehouse) -> None:
 
     if up is None:
         return
-    tmp = OUTPUT / f"_new_{up.name}"
-    tmp.parent.mkdir(parents=True, exist_ok=True)
+    newdir = OUTPUT / "_new"
+    newdir.mkdir(parents=True, exist_ok=True)
+    tmp = newdir / Path(up.name).name
     tmp.write_bytes(up.getvalue())
 
     if kind.startswith("商圏レポート"):
@@ -358,7 +381,7 @@ def tab_predict(wh: Warehouse) -> None:
         row.setdefault("store_id", "NEW01")
         edited = st.data_editor(pd.DataFrame([row]).astype(str),
                                 use_container_width=True, key="edit_new")
-        tmp = OUTPUT / "_new_from_book.csv"
+        tmp = newdir / "_new_from_book.csv"
         tmp.write_bytes(edited.to_csv(index=False).encode("utf-8-sig"))
 
     if not st.button("レポートを出力", type="primary", use_container_width=True):

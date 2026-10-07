@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from pathlib import Path
 
 import pandas as pd
@@ -51,13 +52,39 @@ SEARCH_COLUMNS: list[tuple[str, str, str]] = [
 META_COLUMNS = ["store_id", "store_name", "searched_at", "source_url", "confidence", "notes"]
 
 
+# ファイル名の先頭に付けた店舗CD。「0785_花小金井.xlsx」の 0785。
+# 日付と紛れないよう、3〜5桁かつ区切り文字が続くものだけを拾う
+# （8桁の日付 20250401 や4桁の西暦は後段で弾く）。
+_FILE_CODE = re.compile(r"^(\d{3,5})[\s_\-]")
+
+
+def store_id_from_filename(path: str | Path) -> str | None:
+    """ファイル名の先頭にある店舗CDを取り出す。無ければ None。
+
+    実データのファイル名は「0785_花小金井.xlsx」「0821_トライアル西友河辺店.xlsx」
+    のように店舗CDが頭に付く。先頭ゼロを落とさないよう文字列のまま返す。
+    """
+    stem = unicodedata.normalize("NFKC", Path(path).stem).strip()
+    m = _FILE_CODE.match(stem)
+    if not m:
+        return None
+    code = m.group(1)
+    # 西暦に見えるものは店舗CDとして扱わない（2024_商圏レポート.xlsx など）。
+    if len(code) == 4 and 1900 <= int(code) <= 2100:
+        return None
+    return code
+
+
 def store_name_from_filename(path: str | Path) -> str:
     """ファイル名から店舗名を取り出す。
 
-    「〇〇店_商圏レポート_20250401.xlsx」「〇〇店 (自転車10分).xlsx」などを想定し、
-    末尾の日付・定型語・括弧書きを落とす。
+    「0785_〇〇店.xlsx」「〇〇店_商圏レポート_20250401.xlsx」
+    「〇〇店 (自転車10分).xlsx」などを想定し、
+    先頭の店舗CD・末尾の日付・定型語・括弧書きを落とす。
     """
     stem = Path(path).stem
+    if store_id_from_filename(path):
+        stem = _FILE_CODE.sub("", unicodedata.normalize("NFKC", stem).strip(), count=1)
     stem = re.sub(r"[（(][^）)]*[）)]\s*$", "", stem)          # 末尾の括弧書き
     stem = re.sub(r"[_\-\s]*\d{6,8}\s*$", "", stem)            # 末尾の日付
     for word in ("商圏レポート", "商圏分析", "商圏データ", "商圏", "レポート", "様"):
