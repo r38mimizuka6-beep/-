@@ -68,6 +68,28 @@ def note(msg: str, kind: str = "info") -> None:
      "ok": st.success}[kind](msg)
 
 
+@st.cache_data(show_spinner=False)
+def _codes_from(paths: tuple[str, ...], col: str) -> list[str]:
+    out: set[str] = set()
+    for p in paths:
+        try:
+            df = pd.read_csv(p, encoding="cp932", dtype=str, usecols=[col])
+        except Exception:                                    # noqa: BLE001
+            try:
+                df = pd.read_csv(p, encoding="utf-8-sig", dtype=str, usecols=[col])
+            except Exception:                                # noqa: BLE001
+                continue
+        out |= {v.strip() for v in df[col].dropna() if v.strip()}
+    return sorted(out)
+
+
+def _idpos_store_codes(wh: Warehouse) -> list[str]:
+    """蓄積ずみIDPOSに実際に入っている店舗CD。マスタ側を合わせる先。"""
+    mcfg = MetricsConfig.load(MCFG)
+    col = mcfg.idpos["pi_file"]["columns"]["store_code"]
+    return _codes_from(tuple(str(p) for p in wh.idpos_files()), col)
+
+
 def merge_search_rows(wh: Warehouse, rows: pd.DataFrame) -> int:
     """検索データに行を足す。同じ店舗の行があれば新しい方で置き換える。"""
     cols = ["store_id", "store_name"] + [k for k, _, _ in SEARCH_COLUMNS]
@@ -190,10 +212,31 @@ def tab_warehouse(wh: Warehouse) -> None:
 
     ex = st.session_state.get("extracted_master")
     if ex is not None:
+        known = _idpos_store_codes(wh)
+        if known:
+            st.caption("蓄積ずみIDPOSに入っている店舗CDです。"
+                       "**store_id をこの中のどれかに書き換えてください。**")
+            st.code("  ".join(known))
+        else:
+            st.caption("先に週次IDPOSを取り込むと、使える店舗CDの一覧がここに出ます。")
         st.caption("**store_id を IDPOS の店舗CD と一致させてから**登録してください"
-                   "（先頭ゼロも含めて）。open_date も忘れずに。")
+                   "（店舗名ではなくコード。先頭ゼロも含めて）。open_date も忘れずに。")
         edited = st.data_editor(ex.astype(str), use_container_width=True,
                                 num_rows="dynamic", key="edit_master")
+
+        ids = [str(v).strip() for v in edited.get("store_id", pd.Series(dtype=str))]
+        matched = [i for i in ids if i in known] if known else []
+        if known:
+            if not matched:
+                note("**いまの store_id は1つもIDPOSと一致しません。**"
+                     "このまま登録すると、レポートの数字が全て空になります。"
+                     f"上の一覧（{', '.join(known[:8])}…）から選んで書き換えてください。", "err")
+            elif len(matched) < len(ids):
+                note(f"{len(matched)}/{len(ids)}店だけIDPOSと一致しています。"
+                     f"一致しない store_id: {[i for i in ids if i not in known]}", "warn")
+            else:
+                note(f"{len(matched)}店すべてIDPOSと一致しています。", "ok")
+
         c5, c6 = st.columns(2)
         c5.download_button("CSVとしてダウンロード",
                            edited.to_csv(index=False).encode("utf-8-sig"),

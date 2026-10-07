@@ -963,3 +963,76 @@ def test_search_book_reads_share_written_as_fraction(tmp_path):
 def test_search_book_reads_open_date():
     """開店日は開店直後の週を除外するのに必須。和暦混じりでない限り拾うこと。"""
     assert extract_search_row(SEARCH_BOOK, SEARCH_MAP).row["open_date"] == "2024-03-15"
+
+
+# ---------------- 店舗CDの突き合わせ ----------------
+
+def test_master_with_store_names_instead_of_codes_fails_loudly(tmp_path):
+    """store_id に店舗名が入っていたら、空のレポートを出さずに止めること。
+
+    実機では商圏マスタの store_id が店舗名（西友　河辺店様）のままで、
+    IDPOS の店舗CD（0785 など）と1件も突き合わず、全項目が「—」の
+    レポートが出てしまった。原因が11個の警告に埋もれて見えなかった。
+    """
+    m = pd.read_csv(S / "store_master.csv", dtype=str)
+    m["store_id"] = m["store_name"]
+    bad = tmp_path / "master_names.csv"
+    m.to_csv(bad, index=False, encoding="utf-8-sig")
+
+    with pytest.raises(InputError) as e:
+        run_analysis(config_path=CFG, metrics_path=MCFG,
+                     master_path=bad, new_store_path=S / "new_store.csv",
+                     idpos_path=IDPOS, margin_path=MARGIN,
+                     level="category", level_scan=False)
+    msg = str(e.value)
+    assert "店舗CDが一致する店が1つもありません" in msg
+    assert "都心A店" in msg      # マスタ側の実際の値を見せる
+    assert "0101" in msg         # IDPOS側の実際の値を見せる
+
+
+def test_empty_axis_blames_the_right_side(tmp_path):
+    """軸が空の理由を取り違えないこと。
+
+    既存店の値が全店同じなら原因は既存店マスタであって、新店ではない。
+    """
+    m = pd.read_csv(S / "store_master.csv", dtype=str)
+    for k in ("hh_share_single", "hh_share_with_child", "hh_share_senior",
+              "hh_avg_size", "age_share_65plus"):
+        m[k] = m[k].iloc[0]          # 全店同じ値 → ばらつき0
+    flat = tmp_path / "master_flat.csv"
+    m.to_csv(flat, index=False, encoding="utf-8-sig")
+
+    a = run_analysis(config_path=CFG, metrics_path=MCFG,
+                     master_path=flat, new_store_path=S / "new_store.csv",
+                     idpos_path=IDPOS, margin_path=MARGIN,
+                     level="category", level_scan=False)
+    hit = [w for w in a.warnings if "まるごと使えなかった軸" in w]
+    assert hit, a.warnings
+    assert "軸2 世帯構成（既存店の間でばらつきが無いため）" in hit[0], hit[0]
+    assert "新店の入力が空のため" not in hit[0], hit[0]
+
+
+def test_standardizer_treats_float_noise_as_no_variance():
+    """同値なのに std が 0 にならない場合を取りこぼさないこと。
+
+    0.204 を5つ並べると std(ddof=1) は 3.1e-17 になる（0 ではない）。
+    これを「ばらつきあり」と扱うと z = 丸め誤差 / 3.1e-17 が 10^16 の
+    オーダーになり、その1変数だけで類似店が決まってしまう。
+    """
+    from shoken.axes import Standardizer
+    df = pd.DataFrame({
+        "flat_noisy": [0.204] * 5,        # std = 3.1e-17
+        "flat_exact": [0.553] * 5,        # std = 0.0
+        "flat_zero":  [0.0] * 5,
+        "real":       [0.1, 0.2, 0.3, 0.4, 0.5],
+        "tiny_real":  [1.0, 1.000001, 1.000002, 1.000003, 1.000004],
+    })
+    keys = list(df.columns)
+    sd = Standardizer.fit(df, keys)
+    assert set(sd.degenerate) == {"flat_noisy", "flat_exact", "flat_zero"}
+    assert "tiny_real" not in sd.degenerate, "本物の小さなばらつきまで捨てている"
+
+    z = sd.transform_row(df.iloc[0], keys)
+    assert z["flat_noisy"] is None, "丸め誤差から z 値を作っている"
+    assert z["flat_exact"] is None
+    assert abs(z["real"]) < 10

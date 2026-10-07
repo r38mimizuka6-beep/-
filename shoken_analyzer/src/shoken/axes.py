@@ -22,17 +22,35 @@ class Standardizer:
     def fit(cls, df: pd.DataFrame, keys: list[str]) -> "Standardizer":
         sub = df[keys].apply(pd.to_numeric, errors="coerce")
         mean = sub.mean()
-        # 店舗数が少ないので不偏(ddof=1)を使う。全店同値なら0になる。
+        # 店舗数が少ないので不偏(ddof=1)を使う。
         std = sub.std(ddof=1)
-        degenerate = [k for k in keys if not np.isfinite(std.get(k, np.nan)) or std.get(k, 0) == 0]
+        # 全店同値でも std がちょうど0になるとは限らない。0.204 を5つ並べると
+        # 3.1e-17 が返る。これを「ばらつきあり」と扱うと z = 差/3.1e-17 が
+        # 10^16 のオーダーになり、その1変数だけで距離が決まってしまう。
+        # 値の大きさに対する相対で見て、無視できる変動は0とみなす。
+        degenerate = []
+        for k in keys:
+            sd = std.get(k, np.nan)
+            if not np.isfinite(sd):
+                degenerate.append(k)
+                continue
+            scale = abs(mean.get(k, 0.0))
+            if not np.isfinite(scale):
+                scale = 0.0
+            if sd <= max(1e-12, 1e-9 * scale):
+                degenerate.append(k)
         return cls(mean=mean, std=std, degenerate=degenerate)
 
     def transform_row(self, row: pd.Series, keys: list[str]) -> dict[str, float | None]:
         out: dict[str, float | None] = {}
+        degen = set(self.degenerate)
         for k in keys:
             v = row.get(k)
             s = self.std.get(k, np.nan)
-            if v is None or pd.isna(v) or not np.isfinite(s) or s == 0:
+            # degenerate の判定は fit 側に一本化する。ここで s == 0 だけを見ると、
+            # 全店同値でも std が 3.1e-17 になる場合を取りこぼし、
+            # 丸め誤差を標準偏差で割った巨大な z 値が出る。
+            if k in degen or v is None or pd.isna(v) or not np.isfinite(s):
                 out[k] = None
             else:
                 out[k] = float((v - self.mean[k]) / s)

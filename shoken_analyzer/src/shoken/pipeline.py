@@ -19,7 +19,7 @@ from . import risk as risk_mod
 from .conversion import ConversionResult, compare_methods, run_conversion
 from .config import Config
 from .idpos import LEVELS, IdposData, load_idpos
-from .io_loader import load_new_store, load_store_master
+from .io_loader import InputError, load_new_store, load_store_master
 from .metrics_config import MetricsConfig
 from .predict import LooResult, Prediction, predict_new_store, run_loo
 from .search_profile import load_search_profile, merge_search_profile
@@ -162,6 +162,20 @@ def run_analysis(
     if extra:
         warnings.append(f"IDPOSにあって商圏マスタに無い店舗CD: {extra}（無視します）。")
     stores = stores[stores[cfg.id_key].astype(str).isin(idpos_ids)].reset_index(drop=True)
+    if stores.empty:
+        # ここで止めないと、全セルが「—」のレポートが出て原因が埋もれる。
+        raise InputError(
+            "商圏マスタとIDPOSで、店舗CDが一致する店が1つもありません。\n"
+            f"  商圏マスタの store_id : {sorted(master_ids)[:8]}\n"
+            f"  IDPOSの店舗CD        : {sorted(idpos_ids)[:8]}\n"
+            "\n"
+            "  予測はすべて既存店の実績から作るため、この2つが突き合わないと\n"
+            "  数字は1つも出せません（全項目が『—』になります）。\n"
+            "\n"
+            "  商圏マスタの store_id を、IDPOSの店舗CDと同じ表記に直してください。\n"
+            "  店舗名ではなくコード（先頭ゼロを含む桁数そのまま。例 0785）です。\n"
+            "  ①蓄積データ タブの『既存店の商圏マスタ』から修正できます。"
+        )
     if len(stores) < 3:
         warnings.append(
             f"両方に揃っている既存店が{len(stores)}店しかありません。LOO検証の意味が薄くなります。"
@@ -175,20 +189,33 @@ def run_analysis(
         )
 
     # 軸が丸ごと使えないと、類似店は残りの軸だけで選ばれる。黙って進めない。
+    # 軸が使えない理由は2つあり、打ち手が違う。取り違えると直せない。
+    #   (a) 既存店の間でその変数にばらつきが無い → 既存店マスタを埋める
+    #   (b) 新店の入力が空              → 新店の商圏・検索データを埋める
+    degenerate = set(sim.skipped)
     empty_axes, thin_axes = [], []
     for axis, spec in cfg.axes.items():
         keys = spec.get("variables", [])
         used = [k for k in keys if sim.z_new.get(k) is not None]
         label = spec["label"].split("（")[0]
         if not used:
-            empty_axes.append(label)
+            by_var = [k for k in keys if k in degenerate]
+            if len(by_var) == len(keys):
+                why = "既存店の間でばらつきが無いため"
+            elif by_var:
+                why = "既存店にばらつきが無い変数と、新店が空の変数が混在しているため"
+            else:
+                why = "新店の入力が空のため"
+            empty_axes.append(f"{label}（{why}）")
         elif len(used) < len(keys) / 2:
             thin_axes.append(f"{label}（{len(used)}/{len(keys)}）")
     if empty_axes:
         warnings.append(
-            f"新店の入力が無く、まるごと使えなかった軸があります: {'、'.join(empty_axes)}。"
+            f"まるごと使えなかった軸があります: {'、'.join(empty_axes)}。"
             "類似店は残りの軸だけで選ばれています。"
-            "⑤検索データ（来店手段・駐車場・最寄駅・競合）を埋めると選定が変わる可能性があります。"
+            "「ばらつきが無い」は既存店マスタの値が全店同じか空という意味なので、"
+            "①蓄積データ の商圏マスタを埋めてください。"
+            "「新店の入力が空」なら、新店の商圏データと⑤検索データを埋めてください。"
         )
     if thin_axes:
         warnings.append(
