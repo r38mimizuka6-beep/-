@@ -193,25 +193,47 @@ def tab_warehouse(wh: Warehouse) -> None:
     if books and st.button("Excelから項目を取り出す"):
         tmpdir = OUTPUT / "_books"
         tmpdir.mkdir(parents=True, exist_ok=True)
-        rows, errs = [], []
+        rows, errs, book_notes = [], [], []
         for f in books:
-            dest = tmpdir / f.name
+            dest = tmpdir / Path(f.name).name
             dest.write_bytes(f.getvalue())
+            n: list[str] = []
             try:
-                rows.append(extract_store(dest, EXTRACT_MAP))
+                rows.append(extract_store(dest, EXTRACT_MAP, notes=n))
             except Exception as e:                            # noqa: BLE001
                 errs.append(f"{f.name}: {e}")
+                continue
+            book_notes += [f"{f.name}: {x}" for x in n]
         for e in errs:
             note(e, "err")
         if rows:
             df = pd.DataFrame(rows)
             st.session_state["extracted_master"] = df
+            st.session_state["extracted_notes"] = book_notes
             filled = [c for c in df.columns if df[c].notna().any()]
             note(f"{len(df)}店舗を読み取りました（値が入った列 {len(filled)} / "
-                 f"{len(df.columns)}）。store_id は店舗CDに書き換えてください。", "ok")
+                 f"{len(df.columns)}）。", "ok")
 
     ex = st.session_state.get("extracted_master")
     if ex is not None:
+        bn = st.session_state.get("extracted_notes") or []
+        if bn:
+            note("**ブックの作りが店舗ごとに違う箇所がありました。**"
+                 "該当する項目だけ空にして、残りは読み取っています。\n\n"
+                 + "\n".join(f"- {x}" for x in bn), "warn")
+
+        # どの店が薄いかが分かるように、店舗ごとの充足度を出す。
+        value_cols = [c for c in ex.columns
+                      if c not in ("store_id", "store_name", "trade_area_def")]
+        fill = pd.DataFrame({
+            "store_id": ex.get("store_id", pd.Series(dtype=str)).astype(str),
+            "store_name": ex.get("store_name", pd.Series(dtype=str)).astype(str),
+            "値が入った項目": ex[value_cols].notna().sum(axis=1).astype(int),
+            "全項目": len(value_cols),
+        })
+        st.caption("店舗ごとの充足度（少ない店はブックの作りが違います）")
+        st.dataframe(fill, use_container_width=True, hide_index=True)
+
         known = _idpos_store_codes(wh)
         if known:
             st.caption("蓄積ずみIDPOSに入っている店舗CDです。"

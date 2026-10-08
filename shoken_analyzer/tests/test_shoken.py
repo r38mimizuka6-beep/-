@@ -1122,3 +1122,85 @@ def test_extract_store_takes_store_id_from_filename(tmp_path):
     assert row["store_name"] == "トライアル西友花小金井店"   # CDは店名に残さない
     # 明示指定があればそちらが勝つ
     assert extract_store(p, EXTRACT_MAP, store_id="9999")["store_id"] == "9999"
+
+
+# ---------------- 商圏レポートのシート構成の揺れ ----------------
+
+from shoken.extract_xlsx import resolve_sheet  # noqa: E402
+
+
+def _report_sheets() -> set[str]:
+    import yaml as _yaml
+    spec = _yaml.safe_load(EXTRACT_MAP.read_text(encoding="utf-8"))
+    sheets = {v["sheet"] for v in (spec.get("cells") or {}).values()}
+    for grp in ("anchors", "header_lookups"):
+        sheets |= {v["sheet"] for v in (spec.get(grp) or {}).values()}
+    sheets.add(spec["meta"]["store_name"]["sheet"])
+    if spec.get("age_table"):
+        sheets.add(spec["age_table"]["sheet"])
+    return sheets
+
+
+def _make_report(path, drop=(), rename=None, pop_total=None):
+    import openpyxl
+    wb = openpyxl.Workbook()
+    first = True
+    for sh in sorted(_report_sheets()):
+        if sh in drop:
+            continue
+        name = (rename or {}).get(sh, sh)
+        if first:
+            wb.active.title = name
+            first = False
+        else:
+            wb.create_sheet(name)
+    if pop_total is not None:
+        wb["共通データ"]["B2"] = pop_total
+    wb.save(path)
+    return path
+
+
+def test_missing_sheet_does_not_drop_the_whole_store(tmp_path):
+    """シートが1枚欠けただけで店舗ごと捨てないこと。
+
+    実機では5店中3店に '年収特性23W' が無く、その3店が丸ごと読み取り失敗していた。
+    残り50列以上の正しいデータまで捨てていた。
+    """
+    p = _make_report(tmp_path / "0785_B店.xlsx", drop={"年収特性23W"}, pop_total=12345)
+    notes: list[str] = []
+    row = extract_store(p, EXTRACT_MAP, notes=notes)
+
+    assert row["store_id"] == "0785"
+    assert row["pop_total"] == 12345, "他のシートの値まで落としている"
+    assert row["hh_income_avg"] is None, "無い項目は空にする"
+    assert any("年収特性23W" in n and "ありません" in n for n in notes), notes
+
+
+def test_sheet_vintage_difference_is_resolved(tmp_path):
+    """調査年次違い（23W ⇔ 20W）を同じシートとして読むこと。"""
+    p = _make_report(tmp_path / "0803_C店.xlsx",
+                     rename={"年収特性23W": "年収特性20W"}, pop_total=999)
+    notes: list[str] = []
+    row = extract_store(p, EXTRACT_MAP, notes=notes)
+    assert row["pop_total"] == 999
+    assert any("年収特性20W" in n for n in notes), notes
+
+
+def test_resolve_sheet_rules():
+    class FakeWB:
+        def __init__(self, names):
+            self.sheetnames = names
+
+    wb = FakeWB(["共通データ", "年収特性20W", "世帯特性20W"])
+    assert resolve_sheet(wb, "共通データ") == ("共通データ", None)
+
+    got, note = resolve_sheet(wb, "年収特性23W")
+    assert got == "年収特性20W" and note
+
+    got, note = resolve_sheet(wb, "存在しないシート")
+    assert got is None and "ありません" in note
+
+    # 候補が複数あるときは年次の新しいほうを採る
+    wb2 = FakeWB(["年収特性20W", "年収特性23W"])
+    got, note = resolve_sheet(wb2, "年収特性18W")
+    assert got == "年収特性23W", (got, note)

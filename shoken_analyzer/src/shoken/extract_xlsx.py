@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import re
+import unicodedata
 import warnings
 from pathlib import Path
 
@@ -21,9 +23,48 @@ class ExtractError(ValueError):
     pass
 
 
-def _cell(wb, sheet: str, addr: str):
-    if sheet not in wb.sheetnames:
-        raise ExtractError(f"シート '{sheet}' がありません。シート名: {wb.sheetnames[:8]} ...")
+# ベンダーのブックはシート名の末尾に調査年次を付ける（年収特性23W / 世帯特性20W）。
+# 年次は店舗ごとに違うことがあるので、照合では落とす。
+_VINTAGE = re.compile(r"[0-9]+[A-Za-z]?[0-9]*[A-Za-z]?$")
+
+
+def _norm_sheet(name) -> str:
+    return (unicodedata.normalize("NFKC", str(name))
+            .replace(" ", "").replace("\u3000", "").lower())
+
+
+def _sheet_stem(name) -> str:
+    return _VINTAGE.sub("", _norm_sheet(name))
+
+
+def resolve_sheet(wb, want: str) -> tuple[str | None, str | None]:
+    """設定のシート名を、このブックの実際のシート名に対応づける。
+
+    戻り値は (実際のシート名 or None, 利用者に見せる注記 or None)。
+    見つからなくても例外にしない。1シート欠けただけで店舗ごと落とすと、
+    残り50列以上の正しいデータまで捨てることになるため。
+    """
+    if want in wb.sheetnames:
+        return want, None
+    nw = _norm_sheet(want)
+    for sh in wb.sheetnames:
+        if _norm_sheet(sh) == nw:
+            return sh, None
+    stem = _sheet_stem(want)
+    if stem:
+        cands = [sh for sh in wb.sheetnames if _sheet_stem(sh) == stem]
+        if len(cands) == 1:
+            return cands[0], f"シート '{want}' は '{cands[0]}' として読みました（調査年次違い）"
+        if len(cands) > 1:
+            pick = max(cands, key=_norm_sheet)      # 年次が新しいものを採る
+            return pick, (f"シート '{want}' の候補が複数あります {cands}。"
+                          f"'{pick}' を使いました")
+    return None, f"シート '{want}' がありません。この項目は空にしました"
+
+
+def _cell(wb, sheet: str | None, addr: str):
+    if sheet is None or sheet not in wb.sheetnames:
+        return None
     return wb[sheet][addr].value
 
 
@@ -37,9 +78,9 @@ def _num(v) -> float | None:
     return f if pd.notna(f) else None
 
 
-def _find_by_label(wb, sheet: str, label: str, col: str) -> float | None:
+def _find_by_label(wb, sheet: str | None, label: str, col: str) -> float | None:
     """A列のラベルを前方一致で探し、指定列の値を返す（全角空白は無視）。"""
-    if sheet not in wb.sheetnames:
+    if sheet is None or sheet not in wb.sheetnames:
         return None
     ws = wb[sheet]
     norm = label.replace("　", "").replace(" ", "")
@@ -52,9 +93,10 @@ def _find_by_label(wb, sheet: str, label: str, col: str) -> float | None:
     return None
 
 
-def _find_by_header(wb, sheet: str, header: str, header_row: int, data_row: int) -> float | None:
+def _find_by_header(wb, sheet: str | None, header: str, header_row: int,
+                    data_row: int) -> float | None:
     """ヘッダ行の見出し文字列で列を探し、指定行の値を返す（列ズレに強い）。"""
-    if sheet not in wb.sheetnames:
+    if sheet is None or sheet not in wb.sheetnames:
         return None
     ws = wb[sheet]
     norm = header.replace("　", "").replace(" ", "")
@@ -75,8 +117,13 @@ def extract_store(
     *,
     store_id: str | None = None,
     store_name: str | None = None,
+    notes: list[str] | None = None,
 ) -> dict:
-    """1ブック = 1店舗の商圏変数を dict で返す。"""
+    """1ブック = 1店舗の商圏変数を dict で返す。
+
+    notes を渡すと、シート名の読み替えや欠落をそこに追記する。
+    シートが足りなくても例外にはせず、その項目だけ空にして続ける。
+    """
     xlsx_path, map_path = Path(xlsx_path), Path(map_path)
     m = yaml.safe_load(map_path.read_text(encoding="utf-8"))
 
@@ -85,13 +132,23 @@ def extract_store(
         wb = openpyxl.load_workbook(xlsx_path, data_only=True, read_only=False)
 
     out: dict = {}
+    _notes = notes if notes is not None else []
+    _resolved: dict[str, str | None] = {}
+
+    def sheet_of(name: str) -> str | None:
+        if name not in _resolved:
+            actual, note = resolve_sheet(wb, name)
+            _resolved[name] = actual
+            if note and note not in _notes:
+                _notes.append(note)
+        return _resolved[name]
 
     # 店名・商圏定義
     meta = m.get("meta", {})
     name_spec = meta.get("store_name")
-    raw_name = _cell(wb, name_spec["sheet"], name_spec["cell"]) if name_spec else None
+    raw_name = _cell(wb, sheet_of(name_spec["sheet"]), name_spec["cell"]) if name_spec else None
     area_spec = meta.get("area_def")
-    raw_area = _cell(wb, area_spec["sheet"], area_spec["cell"]) if area_spec else None
+    raw_area = _cell(wb, sheet_of(area_spec["sheet"]), area_spec["cell"]) if area_spec else None
     # ブック内に店名が無ければファイル名から作る。先頭の店舗CDは店名に残さない。
     out["store_name"] = store_name or (str(raw_name).strip() if raw_name
                                        else store_name_from_filename(xlsx_path))
@@ -102,23 +159,29 @@ def extract_store(
 
     # セル直指定
     for key, spec in (m.get("cells") or {}).items():
-        out[key] = _num(_cell(wb, spec["sheet"], spec["cell"]))
+        out[key] = _num(_cell(wb, sheet_of(spec["sheet"]), spec["cell"]))
 
     # ラベル検索（A列の見出しで行を探す）
     for key, spec in (m.get("anchors") or {}).items():
-        out[key] = _find_by_label(wb, spec["sheet"], spec["label"], spec["col"])
+        out[key] = _find_by_label(wb, sheet_of(spec["sheet"]), spec["label"], spec["col"])
 
     # ヘッダ検索（1行目の見出しで列を探す）
     for key, spec in (m.get("header_lookups") or {}).items():
         out[key] = _find_by_header(
-            wb, spec["sheet"], spec["header"],
+            wb, sheet_of(spec["sheet"]), spec["header"],
             int(spec.get("header_row", 1)), int(spec.get("data_row", 2)),
         )
 
     # 年齢5歳階級 -> 5区分
     at = m.get("age_table")
-    if at:
-        ws = wb[at["sheet"]]
+    age_sheet = sheet_of(at["sheet"]) if at else None
+    if at and age_sheet is None:
+        # シートが無くても列は用意しておく（マスタの列を揃えるため）。
+        for bucket in at["buckets"]:
+            out[bucket] = None
+        out["_age_total"] = None
+    elif at:
+        ws = wb[age_sheet]
         raw: dict[str, float] = {}
         for r in range(int(at["first_row"]), int(at["last_row"]) + 1):
             lbl = ws[f'{at["label_col"]}{r}'].value
