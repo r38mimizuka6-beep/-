@@ -39,14 +39,16 @@ SEP = " > "
 
 # ---------------------------------------------------------------- 読み込み
 
-def _read_csv(path: str | Path, encoding: str) -> pd.DataFrame:
+def _read_csv(path: str | Path, encoding: str, *, usecols=None,
+              nrows: int | None = None) -> pd.DataFrame:
     path = Path(path)
     if not path.exists():
         raise InputError(f"ファイルが見つかりません: {path}")
     last: Exception | None = None
     for enc in (encoding, "cp932", "utf-8-sig", "utf-8", "euc_jp"):
         try:
-            return pd.read_csv(path, encoding=enc, dtype=str)
+            return pd.read_csv(path, encoding=enc, dtype=str,
+                               usecols=usecols, nrows=nrows)
         except UnicodeDecodeError as e:
             last = e
     raise InputError(f"文字コードを判別できませんでした: {path}（{last}）")
@@ -65,15 +67,36 @@ def _norm_col(name) -> str:
     return s.lower()
 
 
-def _rename(df: pd.DataFrame, mapping: dict[str, str], path, what: str,
-            warnings: list[str] | None = None):
-    """設定の列名を内部名に付け替える。
 
-    戻り値は (付け替え後のDataFrame, 見つからなかったキーの説明, 採用した元の列名)。
-    元の列名を返すのは、単位（千円／円）を見出しから判定するため。
+def _join_levels(df: pd.DataFrame, cols: list[str]) -> pd.Series:
+    """階層の列を ' > ' でつないで分析単位の名前にする。
+
+    行ごとにPythonを呼ぶ連結は120万行で100秒かかり、画面が固まる主因だった。
+    str.cat なら同じ結果を35倍速で返す。
     """
-    df = df.rename(columns={c: str(c).strip() for c in df.columns})
-    cols = list(df.columns)
+    if not cols:
+        return pd.Series([""] * len(df), index=df.index)
+    out = df[cols[0]].astype(str)
+    for c in cols[1:]:
+        out = out.str.cat(df[c].astype(str), sep=SEP)
+    return out.str.strip(SEP)
+
+
+def _parse_weeks(values: pd.Series):
+    """年週を解析する。同じ表記を何度も解析しないようユニーク値だけ処理する。"""
+    text = values.astype(str)
+    uniq = {v: parse_year_week(v) for v in text.unique()}
+    pairs = text.map(uniq)
+    dates = {pr: week_to_date(*pr) for pr in set(uniq.values())}
+    return pairs, pairs.map(dates)
+
+def _resolve_columns(columns, mapping: dict[str, str]):
+    """実際の列名と設定の対応を決める。
+
+    戻り値は (元の列名→内部名, 内部名→元の列名, 見つからなかった説明, 注記)。
+    DataFrame を読む前に見出しだけで判定できるよう、列名のリストだけを受ける。
+    """
+    cols = [str(c).strip() for c in columns]
     rev: dict[str, str] = {}
     chosen: dict[str, str] = {}
     missing: list[str] = []
@@ -105,7 +128,40 @@ def _rename(df: pd.DataFrame, mapping: dict[str, str], path, what: str,
             notes.append(f"'{col}' に当たる列が複数あって決められません: {cands}")
         else:
             missing.append(f"{key} ← '{col}'")
+    return rev, chosen, missing, notes
 
+
+def _read_mapped(path, encoding: str, mapping: dict[str, str], what: str,
+                 warnings: list[str] | None = None):
+    """見出しだけ先に読み、設定に出てくる列だけを読み込んで付け替える。
+
+    実データのIDPOSは30列あり、本ツールが使うのは16列。全列読むと
+    1ファイル250MBになり、数本で実用メモリを超えて固まる。
+    """
+    head = _read_csv(path, encoding, nrows=0)
+    rev, chosen, missing, notes = _resolve_columns(head.columns, mapping)
+    if not rev:
+        raise InputError(
+            f"{what}の列が1つも一致しませんでした: {path}\n"
+            f"  読み込めた列: {[str(c).strip() for c in head.columns]}\n"
+            f"  config/metrics.yaml の idpos.*_file.columns を実データの列名に合わせてください。"
+        )
+    if notes and warnings is not None:
+        warnings.append(f"{what}（{Path(path).name}）の列: " + "、".join(notes))
+
+    # usecols は元ファイルの綴りで指定する（前後の空白を落とす前の名前）。
+    want = {str(c).strip(): c for c in head.columns}
+    use = [want[c] for c in rev if c in want]
+    df = _read_csv(path, encoding, usecols=use)
+    df = df.rename(columns={c: str(c).strip() for c in df.columns})
+    return df.rename(columns=rev), missing, chosen
+
+
+def _rename(df: pd.DataFrame, mapping: dict[str, str], path, what: str,
+            warnings: list[str] | None = None):
+    """読み込み済みの DataFrame に対して列名を付け替える（小さい入力向け）。"""
+    df = df.rename(columns={c: str(c).strip() for c in df.columns})
+    rev, chosen, missing, notes = _resolve_columns(df.columns, mapping)
     if not rev:
         raise InputError(
             f"{what}の列が1つも一致しませんでした: {path}\n"
@@ -293,8 +349,7 @@ def load_idpos(
     paths = [pi_path] if isinstance(pi_path, (str, Path)) else list(pi_path)
     views: list[tuple[Path, pd.DataFrame]] = []
     for path in paths:
-        df = _read_csv(path, enc)
-        df, miss, _ = _rename(df, pcols, path, "IDPOSファイル", warnings)
+        df, miss, _ = _read_mapped(path, enc, pcols, "IDPOSファイル", warnings)
         for need in ("store_code", "year_week", "line"):
             if need not in df.columns:
                 raise InputError(
@@ -303,15 +358,16 @@ def load_idpos(
         views.append((Path(path), df))
 
     def _prep(df: pd.DataFrame) -> pd.DataFrame:
-        df = df.copy()
+        # 呼び出し側は元のDataFrameを捨てるので複製しない。
+        # 実データ1本で数百MBあり、複製すると山が二重になる。
         df["store_id"] = df["store_code"].astype(str).str.strip()
         if "store_name" not in df.columns:
             df["store_name"] = df["store_id"]
         df["store_name"] = df["store_name"].astype(str).str.strip()
-        yw = df["year_week"].map(parse_year_week)
+        yw, wd = _parse_weeks(df["year_week"])
         df["year"] = [a for a, _ in yw]
         df["week"] = [b for _, b in yw]
-        df["week_date"] = [week_to_date(a, b) for a, b in yw]
+        df["week_date"] = wd
         for col in ("sales_amount", "pi", "quantity", "pos_customers", "id_customers"):
             df[col] = _num(df[col]) if col in df.columns else np.nan
         for lv in LEVELS:
@@ -319,12 +375,22 @@ def load_idpos(
                 df[lv] = ""
             df[lv] = df[lv].astype(str).str.strip()
         if div_filter and "division" in df.columns:
+            # 低温以外を先に落とす。ここで小さくしておくほど後段が軽い。
             df = df[df["division"].isin(div_filter)]
+        # 階層と区分は値の種類が少ない。category にすると文字列の実体が
+        # 1つで済み、実データでメモリが大きく下がる。
+        for col in LEVELS + ["store_id", "store_name", "customer_type", "age_band"]:
+            if col in df.columns and df[col].dtype == object:
+                df[col] = df[col].astype("category")
         return df
 
     div_filter = spec.get("division_filter") or []
-    views = [(path, _prep(df)) for path, df in views]
-    views = [(path, _drop_total_rows(df, spec, path, warnings)) for path, df in views]
+    # 1本ずつ置き換えて、元のDataFrameへの参照をすぐ手放す。
+    # 内包表記だと新旧のリストが同時に生き、ピークが倍になる。
+    for i in range(len(views)):
+        pth, df = views[i]
+        views[i] = (pth, _drop_total_rows(_prep(df), spec, pth, warnings))
+        del df
     views = [(path, df) for path, df in views if not df.empty]
     if not views:
         raise InputError(
@@ -351,7 +417,7 @@ def load_idpos(
     # ---- 分析単位 ----
     path_levels = LEVELS[1:LEVELS.index(level) + 1]   # line から level まで
     for _, df in views:
-        df["unit"] = df[path_levels].agg(SEP.join, axis=1).str.strip(SEP)
+        df["unit"] = _join_levels(df, path_levels)
     pdf = pdf.copy()
     unit_parents = {
         u: dict(zip(path_levels, u.split(SEP)))
@@ -450,13 +516,12 @@ def load_idpos(
         chosen_headers: dict[str, str] = {}
         src_cols: list[str] = []
         for mp in mpaths:
-            part = _read_csv(mp, enc)
-            for c in part.columns:
+            for c in _read_csv(mp, enc, nrows=0).columns:
                 c = str(c).strip()
                 if c not in src_cols:
                     src_cols.append(c)
-            part, mmiss, mchosen = _rename(part, mspec["columns"], mp,
-                                           "粗利ファイル", warnings)
+            part, mmiss, mchosen = _read_mapped(mp, enc, mspec["columns"],
+                                                "粗利ファイル", warnings)
             chosen_headers.update(mchosen)
             if mmiss:
                 warnings.append(
@@ -465,7 +530,7 @@ def load_idpos(
             mparts.append(part)
         mdf = pd.concat(mparts, ignore_index=True)
         mdf["store_id"] = mdf["store_code"].astype(str).str.strip()
-        myw = mdf["year_week"].map(parse_year_week)
+        myw, _ = _parse_weeks(mdf["year_week"])
         mdf["year"] = [a for a, _ in myw]
         mdf["week"] = [b for _, b in myw]
         for lv in LEVELS:
@@ -474,7 +539,7 @@ def load_idpos(
             mdf[lv] = mdf[lv].astype(str).str.strip()
         if div_filter:
             mdf = mdf[mdf["division"].isin(div_filter)]
-        mdf["unit"] = mdf[path_levels].agg(SEP.join, axis=1).str.strip(SEP)
+        mdf["unit"] = _join_levels(mdf, path_levels)
 
         if "gross_profit" not in mdf.columns:
             raise InputError(

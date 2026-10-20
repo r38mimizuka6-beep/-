@@ -1204,3 +1204,85 @@ def test_resolve_sheet_rules():
     wb2 = FakeWB(["年収特性20W", "年収特性23W"])
     got, note = resolve_sheet(wb2, "年収特性18W")
     assert got == "年収特性23W", (got, note)
+
+
+# ---------------- 大きいデータでの速度・メモリ ----------------
+
+def test_join_levels_matches_rowwise_join():
+    """階層の連結を高速化しても結果が変わらないこと。
+
+    DataFrame.agg(SEP.join, axis=1) は120万行で100秒かかり、画面が
+    固まる主因だった。str.cat に置き換えたので等価性を固定する。
+    """
+    from shoken.idpos import SEP, _join_levels
+    df = pd.DataFrame({
+        "a": ["低温", "低温", "低温"],
+        "b": ["和日配", "洋日配", ""],
+        "c": ["納豆", "牛乳", ""],
+    })
+    cols = ["a", "b", "c"]
+    expected = df[cols].agg(SEP.join, axis=1).str.strip(SEP)
+    assert list(_join_levels(df, cols)) == list(expected)
+    assert list(_join_levels(df, [])) == ["", "", ""]
+
+
+def test_parse_weeks_matches_rowwise():
+    """年週の解析をユニーク値だけにしても結果が変わらないこと。"""
+    from shoken.idpos import _parse_weeks, parse_year_week, week_to_date
+    vals = pd.Series(["202549", "2026年1週", "202549", "こわれた", "202602"])
+    pairs, dates = _parse_weeks(vals)
+    assert list(pairs) == [parse_year_week(v) for v in vals]
+    # 旧実装は list を DataFrame に代入していたので、None は NaT になる。
+    # 同じ土俵で比べる。
+    expected = pd.Series([week_to_date(*parse_year_week(v)) for v in vals])
+    pd.testing.assert_series_equal(dates.reset_index(drop=True), expected,
+                                   check_names=False)
+
+
+def test_peek_reads_only_two_columns(tmp_path):
+    """蓄積状況の確認で全列を読まないこと（実データで1本4秒かかっていた）。"""
+    from shoken.warehouse import Warehouse
+    wh = Warehouse(tmp_path / "wh")
+    src = pd.read_csv(IDPOS, encoding="cp932", dtype=str)
+    p = wh.root / "idpos" / "a.csv"
+    src.to_csv(p, index=False, encoding="cp932")
+
+    info = wh._peek(p)
+    assert info["rows"] == len(src)
+    assert info["pairs"], "店舗×週の組み合わせが取れていない"
+    got = {(s, w) for s, w in info["pairs"]}
+    assert len(got) == len(src[["店舗CD", "年週"]].drop_duplicates())
+
+
+def test_coverage_is_cached_between_calls(tmp_path):
+    """2回目の coverage がファイルを読み直さないこと。"""
+    from shoken.warehouse import Warehouse
+    wh = Warehouse(tmp_path / "wh")
+    src = pd.read_csv(IDPOS, encoding="cp932", dtype=str)
+    src.to_csv(wh.root / "idpos" / "a.csv", index=False, encoding="cp932")
+
+    first = wh.coverage()
+    assert wh._peek_cache_path.exists(), "キャッシュが書かれていない"
+
+    calls = []
+    orig = wh._peek
+    wh._peek = lambda p: (calls.append(p), orig(p))[1]
+    second = wh.coverage()
+    assert calls == [], "キャッシュがあるのに読み直している"
+    assert second.stores == first.stores
+    assert second.weeks == first.weeks
+
+
+def test_coverage_cache_invalidates_on_change(tmp_path):
+    """ファイルが増えたらキャッシュが効いていても拾い直すこと。"""
+    from shoken.warehouse import Warehouse
+    wh = Warehouse(tmp_path / "wh")
+    src = pd.read_csv(IDPOS, encoding="cp932", dtype=str)
+    half = sorted(src["店舗CD"].unique())[:2]
+    src[src["店舗CD"].isin(half)].to_csv(wh.root / "idpos" / "a.csv",
+                                        index=False, encoding="cp932")
+    before = wh.coverage()
+    src[~src["店舗CD"].isin(half)].to_csv(wh.root / "idpos" / "b.csv",
+                                         index=False, encoding="cp932")
+    after = wh.coverage()
+    assert len(after.stores) > len(before.stores), (before.stores, after.stores)

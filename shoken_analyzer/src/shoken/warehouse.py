@@ -124,17 +124,26 @@ class Warehouse:
 
     @staticmethod
     def _peek(path: Path) -> dict:
+        # 行数と「どの店のどの週があるか」しか要らないので、店舗CDと年週の
+        # 2列だけ読む。全列読むと実データで1ファイル250MB・4秒かかり、
+        # 画面を操作するたびに全ファイル分それが走って固まる。
+        enc_used = None
         for enc in ("cp932", "utf-8-sig", "utf-8"):
             try:
-                df = pd.read_csv(path, encoding=enc, dtype=str)
+                head = pd.read_csv(path, encoding=enc, dtype=str, nrows=0)
+                enc_used = enc
                 break
             except UnicodeDecodeError:
                 continue
         else:
             raise ValueError("文字コードを判別できません")
-        cols = {c.strip(): c for c in df.columns}
+
+        cols = {str(c).strip(): c for c in head.columns}
         sc = cols.get("店舗CD") or cols.get("店舗コード")
         wc = cols.get("年週")
+        want = [c for c in (sc, wc) if c]
+        df = pd.read_csv(path, encoding=enc_used, dtype=str,
+                         usecols=want or None)
         # 年週の表記はファイルによって違う（202640 / 2026年40週）。
         # 揃えてからでないと、同じ週を別物として数えてしまう。
         from .idpos import parse_year_week
@@ -163,17 +172,58 @@ class Warehouse:
         }
 
     # ---------------- 状況 ----------------
+    # ---------------- _peek の結果キャッシュ ----------------
+    @property
+    def _peek_cache_path(self) -> Path:
+        return self.root / ".peek_cache.json"
+
+    def _load_peek_cache(self) -> dict:
+        try:
+            return json.loads(self._peek_cache_path.read_text(encoding="utf-8"))
+        except Exception:                                    # noqa: BLE001
+            return {}
+
+    def _save_peek_cache(self, cache: dict) -> None:
+        try:
+            self._peek_cache_path.write_text(
+                json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+        except Exception:                                    # noqa: BLE001
+            pass                                             # 書けなくても動作は続ける
+
+    def _peek_cached(self, path: Path, cache: dict) -> dict:
+        """同じ内容のファイルなら読み直さない。
+
+        蓄積ファイルは追記ではなく追加なので、一度読めば中身は変わらない。
+        サイズと更新時刻が同じならキャッシュを使う。
+        """
+        st = path.stat()
+        key = str(path.name)
+        sig = [st.st_size, int(st.st_mtime)]
+        hit = cache.get(key)
+        if hit and hit.get("sig") == sig:
+            return hit["info"]
+        info = self._peek(path)
+        cache[key] = {"sig": sig, "info": {"rows": info["rows"],
+                                           "pairs": [list(p) for p in info["pairs"]]}}
+        return cache[key]["info"]
+
     def coverage(self) -> Coverage:
         """どの店舗のどの週が入っているかを一覧にする。"""
         rows = []
+        cache = self._load_peek_cache()
         for kind, files in (("idpos", self.idpos_files()), ("margin", self.margin_files())):
             for f in files:
                 try:
-                    info = self._peek(f)
+                    info = self._peek_cached(f, cache)
                 except Exception:                            # noqa: BLE001
                     continue
                 for s, w in info.get("pairs", []):
                     rows.append({"kind": kind, "store_id": s, "year_week": w})
+        # 消えたファイルのぶんは落としてから書き戻す
+        alive = {f.name for f in self.idpos_files()} | {f.name for f in self.margin_files()}
+        for gone in [k for k in cache if k not in alive]:
+            cache.pop(gone)
+        self._save_peek_cache(cache)
         if not rows:
             return Coverage(pd.DataFrame(), [], [], ["まだ何も入っていません。"])
         df = pd.DataFrame(rows).drop_duplicates()
@@ -192,8 +242,10 @@ class Warehouse:
                         "（粗利率・粗利PIがその週だけ欠けます）")
         if only_m:
             gaps.append(f"粗利はあるがIDPOSが無い 店舗×週: {len(only_m)}件")
+        by_store = {str(k): sorted(set(v)) for k, v
+                    in df.groupby("store_id")["year_week"]}
         for s in stores:
-            ws = sorted(df[df["store_id"] == s]["year_week"].unique())
+            ws = by_store.get(s, [])
             if len(ws) >= 2:
                 missing = _missing_weeks(ws)
                 if missing:

@@ -68,10 +68,28 @@ def note(msg: str, kind: str = "info") -> None:
      "ok": st.success}[kind](msg)
 
 
-@st.cache_data(show_spinner=False)
-def _codes_from(paths: tuple[str, ...], col: str) -> list[str]:
-    out: set[str] = set()
+def _fingerprint(paths) -> tuple:
+    """ファイルの中身が変わったときだけキャッシュを捨てるための鍵。"""
+    out = []
     for p in paths:
+        try:
+            st_ = Path(p).stat()
+            out.append((str(p), st_.st_size, int(st_.st_mtime)))
+        except OSError:
+            out.append((str(p), -1, -1))
+    return tuple(out)
+
+
+@st.cache_data(show_spinner=False)
+def _coverage_cached(_wh: Warehouse, fp: tuple):
+    """蓄積状況。fp が同じなら再計算しない（画面操作のたびに走らせない）。"""
+    return _wh.coverage()
+
+
+@st.cache_data(show_spinner=False)
+def _codes_from(paths: tuple, col: str) -> list[str]:
+    out: set[str] = set()
+    for p, _size, _mtime in paths:
         try:
             df = pd.read_csv(p, encoding="cp932", dtype=str, usecols=[col])
         except Exception:                                    # noqa: BLE001
@@ -87,7 +105,7 @@ def _idpos_store_codes(wh: Warehouse) -> list[str]:
     """蓄積ずみIDPOSに実際に入っている店舗CD。マスタ側を合わせる先。"""
     mcfg = MetricsConfig.load(MCFG)
     col = mcfg.idpos["pi_file"]["columns"]["store_code"]
-    return _codes_from(tuple(str(p) for p in wh.idpos_files()), col)
+    return _codes_from(_fingerprint(wh.idpos_files()), col)
 
 
 def merge_search_rows(wh: Warehouse, rows: pd.DataFrame) -> int:
@@ -270,7 +288,16 @@ def tab_warehouse(wh: Warehouse) -> None:
 
     st.divider()
     st.markdown("### 入っているもの")
-    cov = wh.coverage()
+    files = list(wh.idpos_files()) + list(wh.margin_files())
+    total_mb = sum(f.stat().st_size for f in files) / 1e6
+    st.caption(f"蓄積ファイル {len(files)}本 / 合計 {total_mb:,.0f} MB")
+    if total_mb > 800:
+        note(f"蓄積が{total_mb:,.0f}MBあります。レポート出力に数分かかり、"
+             "メモリも数GB使います。重いと感じたら、エクスポート時に"
+             "ディビジョン＝低温で絞るか、粒度をサブカテゴリーまでにすると"
+             "大幅に軽くなります（docs/使い方.md の 2-B）。", "warn")
+    with st.spinner("蓄積状況を読んでいます…"):
+        cov = _coverage_cached(wh, _fingerprint(files))
     if cov.frame.empty:
         note("まだ何も入っていません。上から取り込んでください。")
         return
