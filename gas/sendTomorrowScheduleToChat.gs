@@ -4,6 +4,7 @@
  * 前提:
  *  - Apps Script ランタイムは V8（テンプレートリテラル / アロー関数を使用）
  *  - スクリプトのタイムゾーンは Asia/Tokyo（appsscript.json の timeZone）
+ *  - 初回実行時に Calendar / Gmail(読み取り) / 外部通信 の承認が必要
  *
  * 注意: このリポジトリは public なので、CHAT_WEBHOOK_URL は
  * プレースホルダのままにしてある。実際の key / token を含む URL は
@@ -23,6 +24,12 @@ const HOLIDAY_CALENDAR_ID = "ja.japanese#holiday@group.v.calendar.google.com";
 const NON_HOLIDAY_TITLES = [];
 // Google Chat の text は 4096 文字まで
 const CHAT_TEXT_LIMIT = 4096;
+
+// 関連メール検索の設定
+const GMAIL_SEARCH_DAYS = 14;      // 何日前までのメールを探すか
+const MAX_MAIL_PER_EVENT = 3;      // 1予定あたりに表示する最大スレッド数
+const MAX_GUESTS_IN_QUERY = 5;     // 検索条件に含める出席者アドレスの上限
+const MAIL_SUBJECT_MAX = 60;       // 件名の表示上限文字数
 
 function sendTomorrowScheduleToChat() {
   const now = new Date();
@@ -79,6 +86,14 @@ function sendTomorrowScheduleToChat() {
       if (shortDesc) {
         messageText += `  ・アジェンダ概要: ${shortDesc}\n`;
       }
+
+      const relatedMails = findRelatedMails(event);
+      if (relatedMails.length > 0) {
+        messageText += "  ・関連メール:\n";
+        relatedMails.forEach(mail => {
+          messageText += `    - ${mail}\n`;
+        });
+      }
       messageText += "\n";
     });
 
@@ -129,6 +144,109 @@ function findHolidayName(startOfDay, endOfDay) {
     console.warn(`祝日カレンダーを参照できませんでした (${error.message})。祝日判定をスキップして配信します。`);
     return "";
   }
+}
+
+/**
+ * 予定に関連する受信メールを探し、表示用の1行テキストの配列を返す。
+ * 検索できない場合は空配列を返す（配信そのものは止めない）。
+ */
+function findRelatedMails(event) {
+  const query = buildMailQuery(event);
+  if (!query) {
+    return [];
+  }
+
+  try {
+    return GmailApp.search(query, 0, MAX_MAIL_PER_EVENT).map(thread => {
+      const messages = thread.getMessages();
+      const lastMessage = messages[messages.length - 1];
+      const dateStr = Utilities.formatDate(thread.getLastMessageDate(), TIME_ZONE, "MM/dd");
+      const sender = extractSenderName(lastMessage.getFrom());
+      const subject = truncate(thread.getFirstMessageSubject() || "(件名なし)", MAIL_SUBJECT_MAX);
+      return `${dateStr} ${sender}: ${subject}`;
+    });
+  } catch (error) {
+    console.warn(`関連メールを検索できませんでした (${error.message})。メールなしで配信します。`);
+    return [];
+  }
+}
+
+/**
+ * 予定の件名と出席者から Gmail の検索クエリを組み立てる。
+ * 条件が作れない場合は空文字を返す。
+ */
+function buildMailQuery(event) {
+  const conditions = [];
+
+  const title = sanitizeForGmailQuery(event.getTitle() || "");
+  // 2文字以下の件名は一致が広がりすぎるので条件に使わない
+  if (title.length >= 3) {
+    conditions.push(`subject:"${title}"`);
+  }
+
+  const guests = getGuestEmails(event);
+  if (guests.length > 0) {
+    conditions.push(`from:(${guests.join(" OR ")})`);
+  }
+
+  if (conditions.length === 0) {
+    return "";
+  }
+  return `(${conditions.join(" OR ")}) newer_than:${GMAIL_SEARCH_DAYS}d -in:chats -in:drafts`;
+}
+
+/**
+ * 出席者のメールアドレスを返す。自分と会議室などのリソースは除く。
+ */
+function getGuestEmails(event) {
+  try {
+    const myEmail = (Session.getActiveUser().getEmail() || "").toLowerCase();
+    return event
+      .getGuestList()
+      .map(guest => guest.getEmail())
+      .filter(email => {
+        if (!email) {
+          return false;
+        }
+        const lower = email.toLowerCase();
+        // 会議室などのリソースは差出人になり得ないため除外
+        return lower !== myEmail && lower.indexOf("resource.calendar.google.com") === -1;
+      })
+      .slice(0, MAX_GUESTS_IN_QUERY);
+  } catch (error) {
+    console.warn(`出席者を取得できませんでした (${error.message})。件名のみで検索します。`);
+    return [];
+  }
+}
+
+/**
+ * Gmail の検索演算子として解釈される文字を落とし、フレーズ検索に使える文字列にする。
+ */
+function sanitizeForGmailQuery(text) {
+  return text
+    .replace(/["\\(){}]/g, " ")
+    .replace(/[:]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * "表示名 <addr@example.com>" から表示名（なければアドレス）を取り出す。
+ */
+function extractSenderName(from) {
+  if (!from) {
+    return "(不明)";
+  }
+  const matched = from.match(/^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/);
+  if (matched) {
+    const displayName = matched[1].trim();
+    return displayName || matched[2].trim();
+  }
+  return from.trim();
+}
+
+function truncate(text, maxLength) {
+  return text.length > maxLength ? `${text.substring(0, maxLength)}…` : text;
 }
 
 /**
