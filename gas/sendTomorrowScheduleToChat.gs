@@ -14,6 +14,13 @@
 const CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/SPACE_ID/messages?key=YOUR_KEY&token=YOUR_TOKEN";
 
 const TIME_ZONE = "Asia/Tokyo";
+
+// 日本の祝日カレンダー（Google が提供する公開カレンダー）
+const HOLIDAY_CALENDAR_ID = "ja.japanese#holiday@group.v.calendar.google.com";
+
+// 祝日カレンダーに入っているが休業日ではない行事名（誤スキップが起きたらここに追加する）
+// 例: ["クリスマス", "大晦日"]
+const NON_HOLIDAY_TITLES = [];
 // Google Chat の text は 4096 文字まで
 const CHAT_TEXT_LIMIT = 4096;
 
@@ -23,6 +30,13 @@ function sendTomorrowScheduleToChat() {
   // 明日 00:00:00 以上、明後日 00:00:00 未満（終了は排他にして取りこぼしを防ぐ）
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
   const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2);
+
+  // 翌日が休業日（土・日・祝）なら配信しない
+  const skipReason = findSkipReason(startOfDay, endOfDay);
+  if (skipReason) {
+    console.log(`${Utilities.formatDate(startOfDay, TIME_ZONE, "yyyy/MM/dd")} は${skipReason}のため配信をスキップしました。`);
+    return;
+  }
 
   const calendar = CalendarApp.getDefaultCalendar();
   const events = calendar.getEvents(startOfDay, endOfDay);
@@ -72,6 +86,49 @@ function sendTomorrowScheduleToChat() {
   }
 
   postToChat(messageText);
+}
+
+/**
+ * 対象日が休業日なら理由の文字列を、営業日なら空文字を返す。
+ */
+function findSkipReason(startOfDay, endOfDay) {
+  const dayOfWeek = startOfDay.getDay(); // 0:日曜 ... 6:土曜
+  if (dayOfWeek === 6) {
+    return "土曜日";
+  }
+  if (dayOfWeek === 0) {
+    return "日曜日";
+  }
+
+  const holidayName = findHolidayName(startOfDay, endOfDay);
+  if (holidayName) {
+    return `祝日 (${holidayName})`;
+  }
+  return "";
+}
+
+/**
+ * 対象日の祝日名を返す。祝日でなければ空文字。
+ * カレンダーを参照できない場合は、配信を止めないよう空文字を返す（フェイルオープン）。
+ */
+function findHolidayName(startOfDay, endOfDay) {
+  try {
+    const holidayCalendar = CalendarApp.getCalendarById(HOLIDAY_CALENDAR_ID);
+    if (!holidayCalendar) {
+      console.warn("祝日カレンダーを取得できませんでした。祝日判定をスキップして配信します。");
+      return "";
+    }
+
+    const names = holidayCalendar
+      .getEvents(startOfDay, endOfDay)
+      .map(event => (event.getTitle() || "").trim())
+      .filter(title => title && NON_HOLIDAY_TITLES.indexOf(title) === -1);
+
+    return names.length > 0 ? names[0] : "";
+  } catch (error) {
+    console.warn(`祝日カレンダーを参照できませんでした (${error.message})。祝日判定をスキップして配信します。`);
+    return "";
+  }
 }
 
 /**
