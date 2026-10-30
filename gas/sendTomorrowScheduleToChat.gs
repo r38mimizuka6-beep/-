@@ -31,6 +31,13 @@ const MAX_MAIL_PER_EVENT = 3;      // 1予定あたりに表示する最大ス�
 const MAX_GUESTS_IN_QUERY = 5;     // 検索条件に含める出席者アドレスの上限
 const MAIL_SUBJECT_MAX = 60;       // 件名の表示上限文字数
 
+// 勉強会・セミナー案内メールの設定（部署全体が対象で、予定には紐づかないもの）
+const SEMINAR_KEYWORDS = ["勉強会", "セミナー", "研修", "ウェビナー", "説明会", "講演会"];
+const SEMINAR_SENDERS = [];        // 案内元を絞る場合に設定（例: ["jinji@example.co.jp"]）
+const SEMINAR_LABEL = "";          // ラベルで絞る場合に設定（例: "案内"）
+const SEMINAR_SEARCH_DAYS = 14;    // 何日前までの案内を拾うか
+const MAX_SEMINAR_MAILS = 5;       // 表示する最大スレッド数
+
 function sendTomorrowScheduleToChat() {
   const now = new Date();
 
@@ -47,6 +54,9 @@ function sendTomorrowScheduleToChat() {
 
   const calendar = CalendarApp.getDefaultCalendar();
   const events = calendar.getEvents(startOfDay, endOfDay);
+
+  // 予定の関連メールとして出したスレッドを、案内欄で重複表示しないよう記録する
+  const seenThreadIds = [];
 
   const dateStr = Utilities.formatDate(startOfDay, TIME_ZONE, "yyyy/MM/dd (E)");
   let messageText = `*【明日の予定共有】 (${dateStr})*\nお疲れ様です！明日のスケジュールを共有します。\n\n`;
@@ -87,7 +97,7 @@ function sendTomorrowScheduleToChat() {
         messageText += `  ・アジェンダ概要: ${shortDesc}\n`;
       }
 
-      const relatedMails = findRelatedMails(event);
+      const relatedMails = findRelatedMails(event, seenThreadIds);
       if (relatedMails.length > 0) {
         messageText += "  ・関連メール:\n";
         relatedMails.forEach(mail => {
@@ -98,6 +108,15 @@ function sendTomorrowScheduleToChat() {
     });
 
     messageText += "※事前準備や会議間の移動バッファをご確認ください。";
+  }
+
+  // 勉強会・セミナーの案内（部署全体が対象のため予定の有無にかかわらず載せる）
+  const seminarMails = findSeminarMails(seenThreadIds);
+  if (seminarMails.length > 0) {
+    messageText += "\n\n*【勉強会・セミナーのご案内】*\n";
+    seminarMails.forEach(mail => {
+      messageText += `  - ${mail}\n`;
+    });
   }
 
   postToChat(messageText);
@@ -150,7 +169,7 @@ function findHolidayName(startOfDay, endOfDay) {
  * 予定に関連する受信メールを探し、表示用の1行テキストの配列を返す。
  * 検索できない場合は空配列を返す（配信そのものは止めない）。
  */
-function findRelatedMails(event) {
+function findRelatedMails(event, seenThreadIds) {
   const query = buildMailQuery(event);
   if (!query) {
     return [];
@@ -158,17 +177,76 @@ function findRelatedMails(event) {
 
   try {
     return GmailApp.search(query, 0, MAX_MAIL_PER_EVENT).map(thread => {
-      const messages = thread.getMessages();
-      const lastMessage = messages[messages.length - 1];
-      const dateStr = Utilities.formatDate(thread.getLastMessageDate(), TIME_ZONE, "MM/dd");
-      const sender = extractSenderName(lastMessage.getFrom());
-      const subject = truncate(thread.getFirstMessageSubject() || "(件名なし)", MAIL_SUBJECT_MAX);
-      return `${dateStr} ${sender}: ${subject}`;
+      seenThreadIds.push(thread.getId());
+      return formatMailLine(thread);
     });
   } catch (error) {
     console.warn(`関連メールを検索できませんでした (${error.message})。メールなしで配信します。`);
     return [];
   }
+}
+
+/**
+ * 勉強会・セミナーの案内メールを探し、表示用の1行テキストの配列を返す。
+ * すでに予定の関連メールとして出したスレッドは除く。
+ */
+function findSeminarMails(seenThreadIds) {
+  const query = buildSeminarQuery();
+  if (!query) {
+    return [];
+  }
+
+  try {
+    // 重複を除いたうえで上限件数に収めたいので、少し多めに取得する
+    return GmailApp.search(query, 0, MAX_SEMINAR_MAILS + seenThreadIds.length)
+      .filter(thread => seenThreadIds.indexOf(thread.getId()) === -1)
+      .slice(0, MAX_SEMINAR_MAILS)
+      .map(thread => formatMailLine(thread));
+  } catch (error) {
+    console.warn(`案内メールを検索できませんでした (${error.message})。案内欄なしで配信します。`);
+    return [];
+  }
+}
+
+/**
+ * 勉強会・セミナー案内メールの検索クエリを組み立てる。
+ * 条件が1つも設定されていない場合は空文字を返す。
+ */
+function buildSeminarQuery() {
+  const conditions = [];
+
+  const keywords = SEMINAR_KEYWORDS
+    .map(keyword => sanitizeForGmailQuery(keyword))
+    .filter(keyword => keyword.length > 0);
+  if (keywords.length > 0) {
+    conditions.push(`subject:(${keywords.map(keyword => `"${keyword}"`).join(" OR ")})`);
+  }
+
+  if (SEMINAR_SENDERS.length > 0) {
+    conditions.push(`from:(${SEMINAR_SENDERS.join(" OR ")})`);
+  }
+
+  const label = sanitizeForGmailQuery(SEMINAR_LABEL);
+  if (label) {
+    conditions.push(`label:"${label}"`);
+  }
+
+  if (conditions.length === 0) {
+    return "";
+  }
+  return `(${conditions.join(" OR ")}) newer_than:${SEMINAR_SEARCH_DAYS}d -in:chats -in:drafts`;
+}
+
+/**
+ * スレッドを「日付 差出人: 件名」の1行に整形する。
+ */
+function formatMailLine(thread) {
+  const messages = thread.getMessages();
+  const lastMessage = messages[messages.length - 1];
+  const dateStr = Utilities.formatDate(thread.getLastMessageDate(), TIME_ZONE, "MM/dd");
+  const sender = extractSenderName(lastMessage.getFrom());
+  const subject = truncate(thread.getFirstMessageSubject() || "(件名なし)", MAIL_SUBJECT_MAX);
+  return `${dateStr} ${sender}: ${subject}`;
 }
 
 /**
