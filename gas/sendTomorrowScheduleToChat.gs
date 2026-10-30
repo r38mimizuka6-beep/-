@@ -3,10 +3,15 @@
  *
  * 前提:
  *  - Apps Script ランタイムは V8（テンプレートリテラル / アロー関数を使用）
- *  - スクリプトのタイムゾーンは Asia/Tokyo（ファイル > プロジェクトのプロパティ、または appsscript.json の timeZone）
- *  - Webhook URL はスクリプトプロパティ CHAT_WEBHOOK_URL に設定しておく
- *      PropertiesService.getScriptProperties().setProperty("CHAT_WEBHOOK_URL", "https://chat.googleapis.com/...");
+ *  - スクリプトのタイムゾーンは Asia/Tokyo（appsscript.json の timeZone）
+ *
+ * 注意: このリポジトリは public なので、CHAT_WEBHOOK_URL は
+ * プレースホルダのままにしてある。実際の key / token を含む URL は
+ * Apps Script プロジェクト側にだけ記述する（ここには commit しない）。
  */
+
+// Google ChatのWebhook URL
+const CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/SPACE_ID/messages?key=YOUR_KEY&token=YOUR_TOKEN";
 
 const TIME_ZONE = "Asia/Tokyo";
 // Google Chat の text は 4096 文字まで
@@ -106,11 +111,6 @@ function buildShortDescription(description) {
  * Google Chat へ投稿する。4096 文字を超える場合は分割して送る。
  */
 function postToChat(messageText) {
-  const webhookUrl = PropertiesService.getScriptProperties().getProperty("CHAT_WEBHOOK_URL");
-  if (!webhookUrl) {
-    throw new Error("スクリプトプロパティ CHAT_WEBHOOK_URL が設定されていません。");
-  }
-
   splitForChat(messageText).forEach(chunk => {
     const options = {
       method: "post",
@@ -119,7 +119,7 @@ function postToChat(messageText) {
       muteHttpExceptions: true
     };
 
-    const response = UrlFetchApp.fetch(webhookUrl, options);
+    const response = UrlFetchApp.fetch(CHAT_WEBHOOK_URL, options);
     const code = response.getResponseCode();
     if (code < 200 || code >= 300) {
       // muteHttpExceptions: true のままだと失敗に気付けないので明示的に失敗させる
