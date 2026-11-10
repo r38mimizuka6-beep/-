@@ -19,7 +19,7 @@ const CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/SPACE_ID/message
 const TIME_ZONE = "Asia/Tokyo";
 
 // 配信する時刻（0-23）。GAS の仕様上、この時刻から1時間以内のどこかで実行される
-const TRIGGER_HOUR = 18;
+const TRIGGER_HOUR = 17;
 
 // 日本の祝日カレンダー（Google が提供する公開カレンダー）
 const HOLIDAY_CALENDAR_ID = "ja.japanese#holiday@group.v.calendar.google.com";
