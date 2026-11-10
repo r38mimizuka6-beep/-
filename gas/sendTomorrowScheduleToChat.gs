@@ -5,6 +5,8 @@
  *  - Apps Script ランタイムは V8（テンプレートリテラル / アロー関数を使用）
  *  - スクリプトのタイムゾーンは Asia/Tokyo（appsscript.json の timeZone）
  *  - 初回実行時に Calendar / Gmail(読み取り) / 外部通信 の承認が必要
+ *  - 自動配信するには createDailyTrigger() をエディタから1回実行してトリガーを登録する
+ *    （手動実行はトリガー登録にはならないため、それだけでは翌日以降動かない）
  *
  * 注意: このリポジトリは public なので、CHAT_WEBHOOK_URL は
  * プレースホルダのままにしてある。実際の key / token を含む URL は
@@ -15,6 +17,9 @@
 const CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/SPACE_ID/messages?key=YOUR_KEY&token=YOUR_TOKEN";
 
 const TIME_ZONE = "Asia/Tokyo";
+
+// 配信する時刻（0-23）。GAS の仕様上、この時刻から1時間以内のどこかで実行される
+const TRIGGER_HOUR = 18;
 
 // 日本の祝日カレンダー（Google が提供する公開カレンダー）
 const HOLIDAY_CALENDAR_ID = "ja.japanese#holiday@group.v.calendar.google.com";
@@ -120,6 +125,39 @@ function sendTomorrowScheduleToChat() {
   }
 
   postToChat(messageText);
+}
+
+/**
+ * 自動配信用のトリガーを登録する。エディタで1回だけ実行する。
+ *
+ * トリガー自体は毎日動き、翌日が土日祝の場合は
+ * sendTomorrowScheduleToChat() 側で配信を中止する。
+ * 結果として「営業日の前日だけ配信」になる。
+ */
+function createDailyTrigger() {
+  // 複数回実行しても二重配信にならないよう、既存のものを消してから作る
+  deleteDailyTriggers();
+
+  ScriptApp.newTrigger("sendTomorrowScheduleToChat")
+    .timeBased()
+    .everyDays(1)
+    .atHour(TRIGGER_HOUR)
+    .inTimezone(TIME_ZONE)
+    .create();
+
+  console.log(`毎日 ${TRIGGER_HOUR}時台に sendTomorrowScheduleToChat を実行するトリガーを登録しました。`);
+}
+
+/**
+ * このスクリプトが登録した配信トリガーを削除する。
+ */
+function deleteDailyTriggers() {
+  const triggers = ScriptApp.getProjectTriggers().filter(
+    trigger => trigger.getHandlerFunction() === "sendTomorrowScheduleToChat"
+  );
+
+  triggers.forEach(trigger => ScriptApp.deleteTrigger(trigger));
+  console.log(`既存の配信トリガーを ${triggers.length} 件削除しました。`);
 }
 
 /**
